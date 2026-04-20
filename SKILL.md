@@ -3,7 +3,7 @@ name: perch
 description:
   多 Topic 个人信息漏斗。从 X(List 或用户时间线)采集数据,按 Topic 生成 Daily/Topic Wiki 和各类衍生产出。
   触发场景:X 数据采集、每日/时段报告生成、跨 Topic 查询、管理多主题信息漏斗(AI / Web3 / ...)。
-  v1 开发中。命令规划与完整设计见 DOCS/DESIGN.md,开发任务见 DOCS/TASKS.md。
+  v1 开发中。命令规划与完整设计见 docs/DESIGN.md,开发任务见 docs/TASKS.md。
 ---
 
 # Perch
@@ -12,7 +12,7 @@ description:
 
 ## ⚠️ 必读:设计规范
 
-**完整架构、风险、路线图、术语全部在 `DOCS/DESIGN.md`。任何实现前请先读。开发任务拆解见 `DOCS/TASKS.md`。**
+**完整架构、风险、路线图、术语全部在 `docs/DESIGN.md`。任何实现前请先读。开发任务拆解见 `docs/TASKS.md`。**
 
 ## 当前状态:v1 骨架阶段
 

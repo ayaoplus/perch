@@ -4,7 +4,7 @@
 
 Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 用户时间线)采集数据,经过清洗与 LLM 工作流后,产出 Daily Wiki、Topic Wiki 和后续衍生产物。
 
-完整设计先看 `DOCS/DESIGN.md`。任务拆解先看 `DOCS/TASKS.md`。两者比本文件优先级更高。
+完整设计先看 `docs/DESIGN.md`。任务拆解先看 `docs/TASKS.md`。两者比本文件优先级更高。
 
 ## 当前仓库状态
 
@@ -21,8 +21,8 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
 
 - `CLAUDE.md`:项目协作规则与开发边界
 - `AGENTS.md`:给自动化 agent 的仓库速览与执行约束
-- `DOCS/DESIGN.md`:架构、概念、风险、路线图
-- `DOCS/TASKS.md`:当前阶段可执行任务清单
+- `docs/DESIGN.md`:架构、概念、风险、路线图
+- `docs/TASKS.md`:当前阶段可执行任务清单
 - `config.json`:默认 topic、topic 路径、rotate 配置
 - `lib/`:中间固定层。放 vendor 后的 CDP client、X fetcher、normalize、rotate 等共享代码
 - `sources/`:采集端定义或文档。v1 主要是 `x-list` / `x-user`
@@ -31,8 +31,8 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
 
 ## 工作原则
 
-1. 动手前先读 `CLAUDE.md`、`DOCS/DESIGN.md`、`DOCS/TASKS.md`，再看相关目录现状。
-2. 优先遵循 `DOCS/TASKS.md` 的当前步骤。现阶段重点是 **Step 1 — Vendor CDP 瘦核 + X fetcher**。
+1. 动手前先读 `CLAUDE.md`、`docs/DESIGN.md`、`docs/TASKS.md`，再看相关目录现状。
+2. 优先遵循 `docs/TASKS.md` 的当前步骤。现阶段重点是 **Step 1 — Vendor CDP 瘦核 + X fetcher**。
 3. 参考 / vendor 代码时,只读本地上游:
    - `~/development/anyreach/`
    - `~/development/ikiw/`
