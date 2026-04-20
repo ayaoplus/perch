@@ -46,10 +46,12 @@
   - 交付:profile 来源的 normalized markdown
   - 验证:格式与 list 来源完全一致(后续落盘不需要区分来源字段)
 
-- [ ] **S1.7 收尾:统一入口 + 跨源去重**
-  - 动作:`x-fetcher.mjs` 提供统一签名(或保持两个函数但对齐文档),去重按 tweet ID
-  - 交付:clean 的 `lib/x-fetcher.mjs` API
-  - 验证:list + profile 混跑,同一条推文只出现一次
+- [x] **S1.7 收尾:API 文档对齐 + 跨源去重工具**
+  - 动作:走原规划里"保持两个函数但对齐文档"那条出口。统一签名在没调用方的情况下是过度设计,强行 `fetchX({type, url})` 或 `fetchXMultiple` 只会把清晰的命名换成参数 bag
+  - 交付:
+    - `lib/normalize.mjs` 新增 `dedupTweets(tweets)` 纯函数,按 `statusId` 去重且保留首次出现顺序
+    - `lib/x-fetcher.mjs` 顶部注释补一段:两个入口的 `.items` 形态完全一致(同 `normalizeCard`),混跑合并后过 `dedupTweets` 即可;并说明为什么不在此层做统一 API
+  - 验证:inline smoke 跑通 [1,2] + [2,3] → [1,2,3];list + profile 真实混跑留给有调用方时再验
 
 ---
 
