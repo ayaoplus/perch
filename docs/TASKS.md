@@ -41,10 +41,12 @@
   - 交付:`lib/x-fetcher.mjs` 的 `fetchXProfile` 注释 + 输入规范化
   - 验证:真正的 DOM 选择器是否随 X 改版漂移,只有 S1.6 的 live spike 能答;本步交付为零风险代码
 
-- [ ] **S1.6 ★ Review gate #2:profile 抓取链路跑通**
-  - 动作:`scripts/spike-profile.mjs` 跑一次 profile 抓取并 normalize
-  - 交付:profile 来源的 normalized markdown
-  - 验证:格式与 list 来源完全一致(后续落盘不需要区分来源字段)
+- [x] **S1.6 ★ Review gate #2:profile 抓取链路跑通(Codex review)**
+  - 动作:`scripts/spike-profile.mjs` 落盘,展示"原始 DOM 顺序 vs sortTweetsByTime 后"两个视角;stdout 走排序后 markdown
+  - Codex 现场验证:profile 抓取链路通、shape 与 list 一致、formatTweet 可直接复用
+  - 发现的真问题(已消化到设计里):profile DOM 顶部可能是 pinned tweet(非时间顺序),`limit=N` 下 pinned 挤占一位会让最老的那条应收推文漏采。根因不在 fetch 层,解在 Step 2 的 collect 业务层 — 用 generous limit + 窗口过滤 + ID 去重 + 时间排序来消化
+  - 顺带修正:`scripts/spike-list.mjs` `count < limit` 走 exit 2,review gate 不再静默通过 partial;`lib/normalize.mjs` 新增 `sortTweetsByTime` 工具(smoke:pinned 老推文正确沉底、null 时间沉最底);`lib/x-fetcher.mjs` 顶部写清 Layer 1 边界(不排序 / 不窗口 / 不过滤 pinned,全交业务层)
+  - 验证:profile 格式与 list 一致;pinned 处理由业务层(Step 2)编排,fetch 层不为它调整
 
 - [x] **S1.7 收尾:API 文档对齐 + 跨源去重工具**
   - 动作:走原规划里"保持两个函数但对齐文档"那条出口。统一签名在没调用方的情况下是过度设计,强行 `fetchX({type, url})` 或 `fetchXMultiple` 只会把清晰的命名换成参数 bag

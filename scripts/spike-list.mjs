@@ -37,7 +37,17 @@ const count = result.items?.length || 0;
 console.error(`[spike-list] list="${listName}"${owner} items=${count} timelineType=${result.timelineType}`);
 
 if (count === 0) {
-  console.error('[spike-list] WARN: 0 items. Likely not logged in, or list URL changed.');
+  console.error('[spike-list] FAIL: 0 items. Likely not logged in, or list URL changed.');
+  process.exit(1);
+}
+
+if (count < limit) {
+  // review gate 要求严格:链路通但没拿满 limit 也要显性失败(exit 2),
+  // 让 reviewer 明确看到 "链路 OK,但 gate 要求的容量未满足"。
+  console.error(`[spike-list] PARTIAL: got ${count} of ${limit} requested. Link works but capacity not met.`);
+  for (const tweet of result.items) {
+    process.stdout.write(formatTweet(tweet));
+  }
   process.exit(2);
 }
 
