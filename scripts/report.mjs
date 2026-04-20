@@ -80,8 +80,13 @@ if (!validSlots.includes(slotArg)) {
 }
 
 const now = new Date();
-const slot = slotArg === 'now' ? pickSlot(now, topic.timezone, topic.slots) : slotArg;
-const date = getTodayDate(topic.timezone);
+
+// 解析当前 slot + 对应的归属日期。`now` 在凌晨(hour < 第一 slot 的 start_hour)会被
+// 折回昨天的最后一个 slot,**date 也要一起变成昨天**,否则 raw/wiki 路径和 window 都会
+// 指向错误的一天(High bug:反向时间窗、空 raw)。显式指定 slot(非 'now')保持今天日期。
+const { slot, date } = slotArg === 'now'
+  ? resolveNow(now, topic.timezone, topic.slots)
+  : { slot: slotArg, date: getTodayDate(topic.timezone) };
 
 const slotDef = topic.slots.find(s => s.name === slot);
 const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date);
@@ -135,49 +140,74 @@ function log(msg) {
   process.stderr.write(`[report] ${msg}\n`);
 }
 
-// 按指定时区拿当前小时,映射到 topic 自定义 slot。
+// 解析 `report now` 对应的 {slot, date}。
 //
-// slots 已按 start_hour 升序(由 loadTopic 保证)。语义:每个 slot 覆盖 [start_hour, 下一 slot.start_hour)
-// 的小时区间,最后一个 slot 环绕到次日第一个 slot 的 start_hour。hour 小于最小 start_hour 时
-// 视为"上一轮未闭合的最后一个 slot"(例如凌晨 3 点,若最早 slot 是 5 点 morning,最晚 slot 是
-// 18 点 evening,则 3 点 → evening)。
-function pickSlot(now, timezone, slots) {
+// 规则:
+//   - hour ≥ 首 slot.start_hour → 走 pickSlot 正常逻辑,date = 今天
+//   - hour < 首 slot.start_hour → wrapped 场景,slot = 末 slot,date = **昨天**
+//
+// 为什么 date 要跟着变:凌晨跑"现在"对应的 slot 其实是**昨晚那一轮未闭合的 slot**,它的
+// raw 数据落在昨天的文件里、wiki 该产出的也是"昨天 xxx 报告",窗口也应该按昨天算。
+// 之前 date 永远取今天导致 raw/wiki 指向空文件,还会在 since_prev + wrapped 的组合下算出
+// 反向时间窗(start > end)。
+function resolveNow(now, timezone, slots) {
   const hour = Number(new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, hour: '2-digit', hour12: false,
   }).format(now));
-  let current = slots[slots.length - 1];  // 绕回前一天最后一个 slot
+  const today = getTodayDate(timezone);
+  if (hour < slots[0].start_hour) {
+    return { slot: slots[slots.length - 1].name, date: shiftDate(today, -1) };
+  }
+  let current = slots[0];
   for (const s of slots) {
     if (hour >= s.start_hour) current = s;
     else break;
   }
-  return current.name;
+  return { slot: current.name, date: today };
+}
+
+// YYYY-MM-DD ± N 天,字符串运算。不依赖时区(因为 input 已经是 timezone 下的 YYYY-MM-DD)。
+function shiftDate(ymd, deltaDays) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const t = Date.UTC(y, m - 1, d) + deltaDays * 86400000;
+  const nd = new Date(t);
+  return `${nd.getUTCFullYear()}-${String(nd.getUTCMonth() + 1).padStart(2, '0')}-${String(nd.getUTCDate()).padStart(2, '0')}`;
 }
 
 // 计算 slot 的报告覆盖窗口,给 prompt 模板提供 {WINDOW_*} 占位符。
 //
 // window 语义:
-//   - 'today'     — 覆盖今日 00:00 至当前触发时刻
-//   - 'since_prev'— 覆盖上一 slot(按 start_hour 升序)的 start_hour 至当前触发时刻
-//     · 若当前 slot 是首个(没有上一 slot),fallback 为 today — 避免跨昨日 raw 的复杂度
+//   - 'today'     — 覆盖归属日的 00:00 至 endLabel
+//   - 'since_prev'— 覆盖"归属日的 prev.start_hour" 至 endLabel;当前 slot 是首个(没有 prev)
+//                    时 fallback 为 today,避免跨昨日 raw
 //
-// label 格式:`YYYY-MM-DD HH:MM`(raw 里 block 标题行是 `MM-DD HH:MM`,Claude 用这个比较可
-// 自行按时间过滤 block,不需要对 raw 做物理切片)。
-function computeWindow(slotDef, slotsAll, now, timezone, todayDate) {
-  const endLabel = `${todayDate} ${fmtHHMM(now, timezone)}`;
+// endLabel:
+//   - 非 wrapped(date===today):当前触发时刻(`HH:MM`)
+//   - wrapped(date===昨天):归属日的最后一刻(`23:59`),因为报告语义是"回看昨天那个 slot"
+//     而不是"从昨天看到今天凌晨"。这样也保证 start < end,不会出反向窗口。
+//
+// label 格式:`YYYY-MM-DD HH:MM`(raw 里 block 标题行是 `MM-DD HH:MM`,Claude 按这个字符串
+// 自行比较即可)。
+function computeWindow(slotDef, slotsAll, now, timezone, date) {
+  const today = getTodayDate(timezone);
+  const wrapped = date !== today;
+  const endLabel = wrapped
+    ? `${date} 23:59`
+    : `${date} ${fmtHHMM(now, timezone)}`;
   const windowType = slotDef?.window || 'today';
 
   if (windowType === 'since_prev') {
     const idx = slotsAll.findIndex(s => s.name === slotDef.name);
     if (idx > 0) {
       const prev = slotsAll[idx - 1];
-      const startLabel = `${todayDate} ${String(prev.start_hour).padStart(2, '0')}:00`;
+      const startLabel = `${date} ${String(prev.start_hour).padStart(2, '0')}:00`;
       return { type: 'since_prev', startLabel, endLabel };
     }
-    // 首个 slot,退化为 today
-    return { type: 'today', startLabel: `${todayDate} 00:00`, endLabel };
+    // 首个 slot,退化为 today(同 DESIGN §3.1 明示的简化,避免跨昨日 raw)
+    return { type: 'today', startLabel: `${date} 00:00`, endLabel };
   }
 
-  return { type: 'today', startLabel: `${todayDate} 00:00`, endLabel };
+  return { type: 'today', startLabel: `${date} 00:00`, endLabel };
 }
 
 function fmtHHMM(date, timezone) {
