@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-多 Topic 个人信息漏斗 · 基于 ikiw 思想的互联网数据处理框架。**完整设计见 `DESIGN.md`,任何实现前必读。**
+多 Topic 个人信息漏斗 · 基于 ikiw 思想的互联网数据处理框架。**完整设计见 `DOCS/DESIGN.md`,任何实现前必读。开发任务清单见 `DOCS/TASKS.md`。**
 
 ## 提交规则(原子提交)
 
@@ -40,6 +40,6 @@
 
 ## 路线图
 
-见 `DESIGN.md` 第 8 节。当前在 **Step 1 — Vendor CDP 瘦核**。
+见 `DOCS/DESIGN.md` 第 8 节。当前在 **Step 1 — Vendor CDP 瘦核**,细粒度任务见 `DOCS/TASKS.md`。
 
 路线图 v1 结束前,**不做**:Topic Wiki 的 stale/rebuild 机制、跨 topic 查询、Processor 插件化、SQLite 索引层。
