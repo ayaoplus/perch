@@ -29,8 +29,6 @@ import { loadTopic } from '../lib/topic.mjs';
 import { getTodayDate } from '../lib/normalize.mjs';
 import { rawDailyPath, wikiDailyPath, summariesPath } from '../lib/wiki.mjs';
 
-const SLOTS = ['morning', 'noon', 'evening', 'now'];
-
 // "--X value" 形式的 flag,它们的 value 不该被当成 positional 参数。
 const VALUE_FLAGS = new Set(['--topic']);
 
@@ -58,11 +56,6 @@ const { flags, positional } = parseArgs(process.argv.slice(2));
 const slotArg = (positional[0] || 'now').toLowerCase();
 const topicSlug = flags.topic || null;
 
-if (!SLOTS.includes(slotArg)) {
-  log(`ERROR: invalid slot "${slotArg}" — use one of: ${SLOTS.join(', ')}`);
-  process.exit(1);
-}
-
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 let topic;
@@ -73,7 +66,14 @@ try {
   process.exit(1);
 }
 
-const slot = slotArg === 'now' ? pickSlot(new Date(), topic.timezone) : slotArg;
+// slot 名字是 topic 级配置:topic.slots 的 name 列表 + `now` 自动映射。
+const validSlots = [...topic.slots.map(s => s.name), 'now'];
+if (!validSlots.includes(slotArg)) {
+  log(`ERROR: invalid slot "${slotArg}" for topic "${topic.slug}" — use one of: ${validSlots.join(', ')}`);
+  process.exit(1);
+}
+
+const slot = slotArg === 'now' ? pickSlot(new Date(), topic.timezone, topic.slots) : slotArg;
 const date = getTodayDate(topic.timezone);
 
 const promptPath = path.join(topic.templatesDir, `${slot}.md`);
@@ -116,12 +116,20 @@ function log(msg) {
   process.stderr.write(`[report] ${msg}\n`);
 }
 
-// 按指定时区拿当前小时,映射到 slot
-function pickSlot(now, timezone) {
+// 按指定时区拿当前小时,映射到 topic 自定义 slot。
+//
+// slots 已按 start_hour 升序(由 loadTopic 保证)。语义:每个 slot 覆盖 [start_hour, 下一 slot.start_hour)
+// 的小时区间,最后一个 slot 环绕到次日第一个 slot 的 start_hour。hour 小于最小 start_hour 时
+// 视为"上一轮未闭合的最后一个 slot"(例如凌晨 3 点,若最早 slot 是 5 点 morning,最晚 slot 是
+// 18 点 evening,则 3 点 → evening)。
+function pickSlot(now, timezone, slots) {
   const hour = Number(new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, hour: '2-digit', hour12: false,
   }).format(now));
-  if (hour >= 5 && hour < 12) return 'morning';
-  if (hour >= 12 && hour < 18) return 'noon';
-  return 'evening';
+  let current = slots[slots.length - 1];  // 绕回前一天最后一个 slot
+  for (const s of slots) {
+    if (hour >= s.start_hour) current = s;
+    else break;
+  }
+  return current.name;
 }

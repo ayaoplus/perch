@@ -10,6 +10,11 @@
       "label": "AI KOL 精选",
       "fetch_limit": 80
     }
+  ],
+  "slots": [
+    { "name": "morning", "start_hour": 5 },
+    { "name": "noon", "start_hour": 12 },
+    { "name": "evening", "start_hour": 18 }
   ]
 }
 ---
@@ -41,8 +46,23 @@
 - **去重**:tweet ID,`normalize.readExistingIds` 扫当日 raw 文件标题行(DESIGN §5)
 - **时间排序**:写盘前 `normalize.sortTweetsByTime` 统一时间倒序(profile 路径 pinned 会被自然沉底)
 
+## 时段槽位(slots)
+
+frontmatter 的 `slots` 数组定义该 topic 的**时段节奏**(Topic 级配置)。每条:
+
+| 字段 | 含义 |
+|---|---|
+| `name` | 槽位名,必须满足 `^[a-z][a-z0-9-]*$`,不得为保留字 `now`。会被用作 `{SLOT}` 占位符值、wiki 文件名后缀、模板文件名 |
+| `start_hour` | 整数 0-23,该槽位起始小时(topic.timezone);下一槽位的 start_hour 是其结束小时。最后一槽环绕次日首槽 |
+
+`report.mjs now` 按当前时间映射到对应槽位;`hour < 最小 start_hour` 时(如凌晨 3 点)视为"上一轮最后一个槽位"。
+
+每个 `name` 对应同目录下一个 `<name>.md` prompt 模板,缺失会报错。
+
+缺省 `slots` 字段时 fallback 到三槽:morning@5 / noon@12 / evening@18(保持 v1 旧行为)。
+
 ## 清洗与报告约定
 
 - **清洗规则**(v1 不做):Business 层当前直接落 raw,不筛内容。未来如需按关键词 / 账号黑名单过滤,在 collect 层加一层,不改 fetch
-- **报告模板**:`morning.md` / `noon.md` / `evening.md`(同目录)— Step 3 实现时可能按新 raw 结构(含 `via:` 行)做 prompt 微调
-- **摘要 prompt**:Step 3 设计,暂无
+- **报告模板**:每个 `slots[].name` 对应同目录下一个 `.md` 模板(默认 `morning.md` / `noon.md` / `evening.md`)
+- **摘要 prompt**:随时段模板各自演化

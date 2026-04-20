@@ -13,7 +13,7 @@
 | 能力 | 入口 | 说明 |
 |---|---|---|
 | **采集** | `/perch collect` / `scripts/collect.mjs` | 真实登录态 Chrome + CDP 驱动的 X 抓取 → 去重 → 按时间倒序写入当日 raw |
-| **报告** | `/perch report` / `scripts/report.mjs` | 时段 prompt(morning/noon/evening)模板化,由 Claude 会话接棒生成 Daily Wiki |
+| **报告** | `/perch report` / `scripts/report.mjs` | 时段 prompt 模板化(默认 morning/noon/evening,每个 topic 可在 SCHEMA.slots 自定义槽位与边界),由 Claude 会话接棒生成 Daily Wiki |
 | **归档** | `/perch rotate` / `scripts/rotate.mjs` | 每月把非当月的 raw/wiki 搬到 `archive/YYYY-MM/`,幂等,支持 `--dry-run` |
 
 ---
