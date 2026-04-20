@@ -80,17 +80,16 @@ if (!validSlots.includes(slotArg)) {
 }
 
 const now = new Date();
-const isNowMode = slotArg === 'now';
 
-// 解析当前 slot + 对应的归属日期。`now` 在凌晨(hour < 第一 slot 的 start_hour)会被
-// 折回昨天的最后一个 slot,**date 也要一起变成昨天**,否则 raw/wiki 路径和 window 都会
-// 指向错误的一天。显式指定 slot(非 'now')保持今天日期。
-const { slot, date } = isNowMode
-  ? resolveNow(now, topic.timezone, topic.slots)
-  : { slot: slotArg, date: getTodayDate(topic.timezone) };
+// 解析当前 slot + 对应的归属日期。两种模式统一处理:
+//   - `now` 凌晨(hour < 首 slot.start_hour)→ slot=末 slot, date=昨天
+//   - 显式指定 slot,但 now 在该 slot 今天的 start_hour 之前 → date=昨天(看昨天那个实例)
+//   - 其它情况 → date=今天
+// 这样 endLabel 永远不会比 startLabel 小(见 computeWindow 里的 min 语义)。
+const { slot, date } = resolveSlotAndDate(slotArg, now, topic.timezone, topic.slots);
 
 const slotDef = topic.slots.find(s => s.name === slot);
-const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date, isNowMode);
+const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date);
 
 const promptPath = path.join(topic.templatesDir, `${slot}.md`);
 let template;
@@ -141,30 +140,47 @@ function log(msg) {
   process.stderr.write(`[report] ${msg}\n`);
 }
 
-// 解析 `report now` 对应的 {slot, date}。
+// 解析 slot + 归属 date,对 `now` 和显式指定统一处理。
 //
-// 规则:
-//   - hour ≥ 首 slot.start_hour → 走 pickSlot 正常逻辑,date = 今天
-//   - hour < 首 slot.start_hour → wrapped 场景,slot = 末 slot,date = **昨天**
+// 规则(hour = 当前时刻在 topic.timezone 下的小时):
+//   - slotArg === 'now':
+//       · hour ≥ 首 slot.start_hour → pickSlot 正常逻辑,date = 今天
+//       · hour < 首 slot.start_hour → slot = 末 slot,date = **昨天**(凌晨 wrap)
+//   - slotArg === 显式 slot 名:
+//       · hour ≥ slotDef.start_hour → date = 今天(slot 今天已开始,包含进行中 / 已过)
+//       · hour < slotDef.start_hour → date = **昨天**(slot 今天未开始,看昨天那个实例)
 //
-// 为什么 date 要跟着变:凌晨跑"现在"对应的 slot 其实是**昨晚那一轮未闭合的 slot**,它的
-// raw 数据落在昨天的文件里、wiki 该产出的也是"昨天 xxx 报告",窗口也应该按昨天算。
-// 之前 date 永远取今天导致 raw/wiki 指向空文件,还会在 since_prev + wrapped 的组合下算出
-// 反向时间窗(start > end)。
-function resolveNow(now, timezone, slots) {
+// 为什么显式 slot 未开始时要 wrap 到昨天:之前 date 永远取今天会让 `report noon` 在凌晨跑
+// 产出 "05:00 → 18:00"(全是未来时刻,raw 里根本没东西)。归属到昨天 noon 既合理又保证
+// startLabel ≤ endLabel(canonical),消除"未来窗口"问题。
+function resolveSlotAndDate(slotArg, now, timezone, slots) {
   const hour = Number(new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone, hour: '2-digit', hour12: false,
   }).format(now));
   const today = getTodayDate(timezone);
-  if (hour < slots[0].start_hour) {
-    return { slot: slots[slots.length - 1].name, date: shiftDate(today, -1) };
+
+  if (slotArg === 'now') {
+    if (hour < slots[0].start_hour) {
+      return { slot: slots[slots.length - 1].name, date: shiftDate(today, -1) };
+    }
+    let cur = slots[0];
+    for (const s of slots) {
+      if (hour >= s.start_hour) cur = s;
+      else break;
+    }
+    return { slot: cur.name, date: today };
   }
-  let current = slots[0];
-  for (const s of slots) {
-    if (hour >= s.start_hour) current = s;
-    else break;
+
+  // 显式 slot:若今天还没到该 slot 起点,归属昨天
+  const slotDef = slots.find(s => s.name === slotArg);
+  if (!slotDef) {
+    // 不应该到这里(入口已经校验 slot 合法性),保守返回 today
+    return { slot: slotArg, date: today };
   }
-  return { slot: current.name, date: today };
+  if (hour < slotDef.start_hour) {
+    return { slot: slotArg, date: shiftDate(today, -1) };
+  }
+  return { slot: slotArg, date: today };
 }
 
 // YYYY-MM-DD ± N 天,字符串运算。不依赖时区(因为 input 已经是 timezone 下的 YYYY-MM-DD)。
@@ -182,21 +198,28 @@ function shiftDate(ymd, deltaDays) {
 //   - 'since_prev'— 覆盖"归属日的 prev.start_hour" 至 endLabel;当前 slot 是首个(没有 prev)
 //                    时 fallback 为 today,避免跨昨日 raw
 //
-// endLabel 逻辑:
-//   - isNowMode === true 且 !wrapped(即"现在就是这个 slot 的活跃时段"):用当前 HH:MM
-//   - 其它所有情况(wrapped now / 显式指定 slot):用该 slot 的 **canonical end** —— 下一 slot
-//     的 start_hour,或末 slot 的归属日 23:59。这避免"显式指定 slot 在 slot 时段之前触发"
-//     时 now 早于 startLabel 产生反向时间窗。
+// endLabel 逻辑(两种模式统一):
+//   - date !== today(wrapped / 显式回退到昨天)→ 用该 slot 的 **canonical end**(下一 slot
+//     起点,或末 slot 的归属日 23:59):报告覆盖那个 slot 在昨日的完整实例
+//   - date === today → 取 **min(now, canonical end)**:
+//       · slot 进行中 → now(匹配 DESIGN 的"到触发时刻"语义)
+//       · slot 已过 → canonical end(不把之后其它 slot 的时段包进来)
+//   这消除了之前"显式指定 slot 在 slot 时段前触发"会产生未来窗口 / 反向窗口的问题。
+//   前置条件:resolveSlotAndDate 已保证 "date === today" 时 now ≥ slotDef.start_hour。
 //
-// label 格式:`YYYY-MM-DD HH:MM`(raw block 标题是 `MM-DD HH:MM`,Claude 按这个字符串比较)。
-function computeWindow(slotDef, slotsAll, now, timezone, date, isNowMode) {
+// label 格式:`YYYY-MM-DD HH:MM`(raw block 标题是 `MM-DD HH:MM`,Claude 按字符串比较过滤)。
+function computeWindow(slotDef, slotsAll, now, timezone, date) {
   const today = getTodayDate(timezone);
-  const wrapped = date !== today;
-  const endLabel = (isNowMode && !wrapped)
-    ? `${date} ${fmtHHMM(now, timezone)}`
-    : canonicalEndLabel(slotDef, slotsAll, date);
-  const windowType = slotDef?.window || 'today';
+  const canonical = canonicalEndLabel(slotDef, slotsAll, date);
+  let endLabel;
+  if (date !== today) {
+    endLabel = canonical;
+  } else {
+    const nowLabel = `${date} ${fmtHHMM(now, timezone)}`;
+    endLabel = nowLabel < canonical ? nowLabel : canonical;
+  }
 
+  const windowType = slotDef?.window || 'today';
   if (windowType === 'since_prev') {
     const idx = slotsAll.findIndex(s => s.name === slotDef.name);
     if (idx > 0) {
