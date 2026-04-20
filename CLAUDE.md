@@ -40,6 +40,6 @@
 
 ## 路线图
 
-见 `docs/DESIGN.md` 第 8 节。当前在 **Step 1 — Vendor CDP 瘦核**,细粒度任务见 `docs/TASKS.md`。
+见 `docs/DESIGN.md` 第 8 节。**Step 1(vendor CDP + X fetcher)已全部收尾**(S1.4 / S1.6 两个 review gate 均通过)。当前推进 **Step 2 — topic 配置 + `/perch collect`**,细粒度任务见 `docs/TASKS.md`。
 
 路线图 v1 结束前,**不做**:Topic Wiki 的 stale/rebuild 机制、跨 topic 查询、Processor 插件化、SQLite 索引层。
