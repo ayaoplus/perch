@@ -61,10 +61,11 @@
 
 **目标**:`/perch collect --topic ai-radar` 能端到端跑通,raw 落到 topic 数据目录。
 
-- [ ] **S2.1 设计 `SCHEMA.md` 模板** — 定义 Topic 配置规范(source 列表、清洗规则占位、报告模板路径、摘要 prompt 占位)
-- [ ] **S2.2 写 ai-radar topic 的 `SCHEMA.md`** — 落到 `templates/topics/ai-radar/SCHEMA.md`,source 指向现有 list/handle
-- [ ] **S2.3 `lib/topic.mjs`** — 加载 Topic 配置、解析 source、定位数据目录
-- [ ] **S2.4 `/perch collect` 入口** — 读 Topic → 调 x-fetcher → normalize → 追加到 `raw/daily/YYYY-MM-DD.md`(去重 + 时间倒序)
+- [x] **S2.1 `SCHEMA.md` 模板(JSON frontmatter + 人读正文)** — 顶部两行 `---` 之间放合法 JSON(`topic` / `description` / `sources[]`);正文是业务目标 / 数据源说明 / 采集策略等 LLM & 人都能读的描述。用 JSON 而非 YAML 是为了不引入依赖
+- [x] **S2.2 `templates/topics/ai-radar/SCHEMA.md`** — 一条 `ai-kol` source(list),target 是现有的 AI KOL list URL,fetch_limit 80;正文记录业务目标、采集策略、清洗/报告约定
+- [x] **S2.3 `lib/topic.mjs`** — `loadTopic(slug, rootDir)` 读 config.json + SCHEMA frontmatter,产出 `{slug, description, timezone, dataPath, templatesDir, sources[]}`,校验 sources 的必要字段
+- [x] **S2.4 `scripts/collect.mjs`(`/perch collect` 入口)** — 按 DESIGN §2.1 管线:对每个 source 调 fetchXList/fetchXProfile → dedupTweets 跨源合并 → readExistingIds diff → sortTweetsByTime → formatTweet 追加(带 via 行)到 `raw/daily/YYYY-MM-DD.md`。支持 `--dry` 和 `--topic`。不实现时间窗状态(ID 去重已覆盖,DESIGN §2.1 同步简化)
+  - 顺带改:`lib/normalize.mjs` `formatTweet` 加 `options.source` 参数 → 渲染 `via:` 行;DESIGN §2.1 pipeline 简化去掉 lastRunTime;DESIGN §4.1/§4.2 目录结构更新(加 `scripts/` / `topic.mjs` / `templates/topics/` SCHEMA,数据目录去掉 SCHEMA)
 - [ ] **S2.5 ★ Review gate #3:端到端跑通 `ai-radar` collect** — raw 文件按 DESIGN §5 格式写入,多次跑累积不漏不重
 
 > 跑到 Step 2 收尾时,再回来把 Step 3-5 展开成子任务。
