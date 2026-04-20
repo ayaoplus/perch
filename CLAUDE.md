@@ -26,14 +26,24 @@
 
 按 DESIGN §2.1 的 **Fetch / Business / Tool** 三层分工改代码:
 
-- **Fetch**(`lib/x-fetcher.mjs`)返回 DOM 顺序的原始 tweet。不排序、不做时间窗、不识别 pinned。内部 2-pass 稳定性只吸收 lazy-DOM 抖动,不是业务语义
-- **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs`)编排业务语义:跨源合并、ID 去重、时间排序、按 topic 写盘
-- **Tool**(`lib/normalize.mjs` / `topic.mjs` / `wiki.mjs` / `rotate.mjs`)提供可组合原子
+- **Fetch**(`lib/x-fetcher.mjs` / `x-adapter.mjs`)返回 DOM 顺序的原始 tweet + 数据完整性兜底(2-pass 稳定性 / 长推 hydrate / socialContext 识别)。不排序、不做时间窗、不识别 pinned
+- **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs` / `fetch-article.mjs` / `new-topic.mjs`)编排业务语义:跨源合并、ID 去重 + 聚合、**全局时间重排**(不是前插)、slot 映射 + 日期回退、窗口计算、按 topic 写盘
+- **Tool**(`lib/normalize.mjs` / `topic.mjs` / `wiki.mjs` / `rotate.mjs` / `article-cache.mjs`)提供可组合原子
 
 不要把业务语义倒回 Fetch 层。
 
+## 新建 / 配置 topic
+
+优先用 `node scripts/new-topic.mjs --from-json <spec>`(有校验、幂等)。`spec.slots` 可省略 → fallback `DEFAULT_SLOTS`。详细字段 / 常见坑见 `docs/TOPIC_AUTHORING.md`。
+
+## 时段报告语义
+
+- `report now` 在凌晨(hour < 首 slot.start_hour)会 wrap 到**昨天最后一个 slot**,`date` / `raw` / `wiki` 一起回退
+- 显式 `report <slot>` 的 endLabel 用 **canonical end**(下一 slot 起点或归属日 23:59),与触发时刻无关
+- prompt 模板**不要硬编码小时数**,用 `{WINDOW_*}` 占位符,让 SCHEMA.slots.window 成为单一 source of truth
+
 ## 状态
 
-v1 主链路已实现:collect / report / rotate 三条管线闭环。详见 `docs/DESIGN.md` §7。
+v1 全链路已实现:collect / report / rotate / fetch-article / new-topic 五条管线闭环。两个 topic 在跑:ai-radar + crypto-radar。详见 `docs/DESIGN.md` §7。
 
-v1 明确不做:Topic Wiki stale/rebuild、跨 topic 查询、Processor 插件化、SQLite 索引、`report` 的 cron 化、summaries 月度切分归档。
+v1 明确不做:Topic Wiki stale/rebuild、跨 topic 查询、Processor 插件化、SQLite 索引、`report` 的 cron 化、summaries 月度切分归档、跨昨日 raw 的 since_prev 首 slot、per-topic timezone、外链深抓。

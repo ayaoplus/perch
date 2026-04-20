@@ -66,12 +66,13 @@ Topic **数据**(raw / wiki / summaries / archive)住在 `config.json` 指定的
 
 ```bash
 # 采集(自动化)
-node scripts/collect.mjs --topic ai-radar            # 正式跑,写入当日 raw
-node scripts/collect.mjs --topic ai-radar --dry      # 看统计和前 3 条样本,不写盘
+node scripts/collect.mjs --topic ai-radar                # 正式跑,写入当日 raw(全局按时间重排,非前插)
+node scripts/collect.mjs --topic ai-radar --dry          # 看统计和前 3 条样本,不写盘
+node scripts/collect.mjs --topic ai-radar --limit 20     # 临时覆盖所有 source 的 fetch_limit
 
 # 报告(Skill 模式:脚本打印完整 prompt,当前 Claude 会话接棒生成并写 wiki)
-node scripts/report.mjs morning --topic ai-radar
-node scripts/report.mjs now --topic ai-radar         # now 按时区映射 slot
+node scripts/report.mjs now --topic ai-radar             # 推荐:自动选 slot + 凌晨 wrap 到昨天 + window 自动算
+node scripts/report.mjs morning --topic ai-radar         # 显式指定(end 用 canonical,不受当前时刻影响)
 
 # 按需深抓 Twitter Article(Claude 在 report 阶段需要时 Bash 调用)
 node scripts/fetch-article.mjs https://x.com/author/status/NNN --topic ai-radar
@@ -81,10 +82,12 @@ node scripts/rotate.mjs --topic ai-radar --dry-run
 node scripts/rotate.mjs --topic ai-radar
 
 # 新建一个 topic
-node scripts/new-topic.mjs                           # 交互向导
-node scripts/new-topic.mjs --from-json spec.json     # 非交互,agent 友好
+node scripts/new-topic.mjs                               # 交互向导
+node scripts/new-topic.mjs --from-json spec.json         # 非交互,agent 友好(slots 可省略 → DEFAULT_SLOTS)
 node scripts/new-topic.mjs --help
 ```
+
+**`report now` 的关键行为**(agent 必读):凌晨(hour < `slots[0].start_hour`)触发时,slot 自动映射到**昨天的最后一个 slot**,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 同步指向昨天;`{WINDOW_END_LABEL}` 用归属日 `23:59`(看昨天整天)。详见 [`docs/TOPIC_AUTHORING.md §3.4`](docs/TOPIC_AUTHORING.md)。
 
 ---
 
@@ -93,9 +96,11 @@ node scripts/new-topic.mjs --help
 v1 已实现 collect / report / rotate / fetch-article / new-topic 五条主链路:
 
 - 长推自动 hydrate + socialContext 识别 + dedup 聚合(纯 RT 合并、quote 完整保留)
-- Slot 数量/边界/覆盖窗口全部 topic 级可配(SCHEMA.slots)
+- Slot 数量 / 边界 / 覆盖窗口全部 topic 级可配(`SCHEMA.slots`);`report now` 自带日期回退 + wrap;显式 slot 用 canonical end
+- Raw 每次写盘**全局时间重排**(非前插),吸收 pinned / DOM 抖动 / source 晚到的旧推
 - Twitter Article 按需深抓 + 按月缓存 + 随 rotate 归档
-- 新 topic 脚手架(交互 / `--from-json`,都有 spec 校验)
+- 新 topic 脚手架(交互 / `--from-json`,都有 spec 校验;`slots` 可省略自动 fallback `DEFAULT_SLOTS`)
+- 两个验证过的 topic:`ai-radar`(AI 博主选题漏斗)+ `crypto-radar`(币圈交易)
 
 未来会加的能力(详见 DESIGN §7 / §8):
 

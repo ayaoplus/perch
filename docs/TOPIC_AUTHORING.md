@@ -178,17 +178,50 @@ const written = await scaffoldTopic(rootDir, spec);
 | 占位符 | 值 |
 |---|---|
 | `{TOPIC_SLUG}` | topic slug |
-| `{DATE}` | `YYYY-MM-DD`(topic.timezone) |
+| `{DATE}` | `YYYY-MM-DD`(**归属日**,不是"今天"—— wrap 场景指向昨天,详见下节) |
 | `{SLOT}` | 当前 slot name |
-| `{RAW_PATH}` | 当日 raw 文件绝对路径 |
-| `{WIKI_PATH}` | 本次 wiki 产出绝对路径 |
+| `{RAW_PATH}` | 归属日 raw 文件绝对路径 |
+| `{WIKI_PATH}` | 本次 wiki 产出绝对路径(归属日 + slot) |
 | `{SUMMARIES_PATH}` | `summaries.md` 绝对路径 |
 | `{SOURCES}` | 人读 source 描述(`X List "AI KOL" + X Profile "elonmusk"`) |
 | `{WINDOW_TYPE}` | `today` \| `since_prev` |
-| `{WINDOW_START_LABEL}` | 窗口起点(`YYYY-MM-DD HH:MM`) |
-| `{WINDOW_END_LABEL}` | 窗口终点(当前时刻,`YYYY-MM-DD HH:MM`) |
+| `{WINDOW_START_LABEL}` | 窗口起点,`YYYY-MM-DD HH:MM` 格式(对 `today` 是 `date 00:00`;对 `since_prev` 是 `date prev.start_hour:00`) |
+| `{WINDOW_END_LABEL}` | 窗口终点,`YYYY-MM-DD HH:MM` 格式,三种取值见下面的 **report now 行为** 一节 |
 | `{ARTICLE_CACHE_DIR}` | 当月 article 缓存目录绝对路径 |
 | `{FETCH_ARTICLE_CMD}` | `node /abs/path/to/scripts/fetch-article.mjs --topic <slug>`(Claude 直接拼 `<status_url>` 用) |
+
+**prompt 作者约定**:模板里**不要硬编码**"过去 12h""完整 24h"这种小时数,而是引用 `{WINDOW_TYPE}` / `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}`。这样 SCHEMA.slots 的 window 配置变更会自动反映到 prompt 里,不用改两处。ai-radar 的三份 prompt 是参考样例。
+
+### 3.4 `report now` 的 slot 映射 + 日期回退
+
+这是**所有 agent 在 prompt 处理 raw 时必须理解的语义**,避免用错日期。
+
+**映射规则**:
+
+| 触发时的小时(topic.timezone) | 映射 slot | `{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` |
+|---|---|---|
+| `hour ≥ slots[0].start_hour` | 正常 pickSlot | **今天**的 raw / wiki |
+| `hour < slots[0].start_hour`(凌晨 wrap) | **最后一个** slot | **昨天**的 raw / wiki |
+
+**例子**(ai-radar slots=`morning@5 / noon@12 / evening@18`):
+
+- 00:38 跑 `report now` → `slot=evening`、`date=昨天`、raw 指向**昨天的 raw**、wiki 写到 `wiki/daily/<昨天>-evening.md`
+- 06:30 跑 `report now` → `slot=morning`、`date=今天`
+- 20:00 跑 `report now` → `slot=evening`、`date=今天`
+
+**`{WINDOW_END_LABEL}` 的三种取值**(取决于触发方式):
+
+| 触发方式 | 是否 wrap | endLabel |
+|---|---|---|
+| `report now`(isNowMode=true) | 否 | 当前时刻 `HH:MM` |
+| `report now` | 是(wrap) | 归属日 `23:59`(看昨天整天) |
+| `report <slot>`(显式指定) | — | 该 slot 的 **canonical end**:下一 slot 的 `start_hour:00`,最后一个 slot 用归属日 `23:59` |
+
+**为什么显式指定 slot 不用"now"**:显式 `report noon` 在凌晨 01:07 跑,若用 now 作 endLabel 会算出 `05:00 → 01:07`(反向)。canonical end 的含义是"这个 slot 按设计应覆盖到哪一刻",与触发时刻无关。
+
+**agent 使用建议**:
+- 自动化调度里,**推荐用 `report now`** —— 时区 + wrap 逻辑已封装,你不用算几点对应哪个 slot
+- 补跑或复盘时再用 `report <slot>` 显式指定。endLabel 会是 slot 的 canonical end,不会被当前时刻影响
 
 ---
 
@@ -196,7 +229,9 @@ const written = await scaffoldTopic(rootDir, spec);
 
 文件:`<path>/raw/daily/YYYY-MM-DD.md`
 
-一条推文 = 一个 block,时间倒序(最新在上)。block 结构:
+一条推文 = 一个 block,**全局**时间倒序(最新在上)。每次 `collect` 运行会把"已有 block"和"新抓 block"合并后整体按 `MM-DD HH:MM` 时间戳重排写回(不是简单前插),所以"晚到的旧推文"会自动排到正确位置,不会破坏倒序不变量。
+
+block 结构:
 
 ```markdown
 ## @handle (Name) · MM-DD HH:MM · [source](https://x.com/handle/status/NNN)
@@ -294,17 +329,23 @@ vim templates/topics/<slug>/noon.md
 # 4. Dry 一次(不写盘,看抓到什么)
 node scripts/collect.mjs --topic <slug> --dry
 
-# 5. 正式采集(写进当日 raw;一天多次跑自动按 statusId 去重)
+# 5. 正式采集(写进当日 raw;一天多次跑自动按 statusId 去重 + 全局时间重排)
 node scripts/collect.mjs --topic <slug>
+node scripts/collect.mjs --topic <slug> --limit 20    # 可选:临时覆盖所有 source 的 fetch_limit
 
 # 6. 生成某个 slot 的报告(Claude 会话里跑)
-node scripts/report.mjs now --topic <slug>            # 按当前时间自动选 slot
-node scripts/report.mjs morning --topic <slug>        # 指定 slot
+node scripts/report.mjs now --topic <slug>            # 自动选 slot + 凌晨 wrap 到昨天末 slot
+node scripts/report.mjs morning --topic <slug>        # 显式指定(end 用 canonical,不受当前时刻影响)
 
 # 7. 月末归档(上月 raw + wiki + article cache → archive/)
 node scripts/rotate.mjs --topic <slug> --dry-run
 node scripts/rotate.mjs --topic <slug>
 ```
+
+**agent 跑自动化建议**:
+- `collect`:定时 3~4 次/天,CLI 幂等(statusId 去重 + 全局重排都能吸收重复调用)
+- `report`:优先用 `now`,时区 / slot / 归属日期 / window 全部自动解析;凌晨触发会自动 wrap 到昨天末 slot,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 一起指向昨天
+- `rotate`:每月 1 号跑一次,前置 `--dry-run` 看 plan
 
 ---
 
@@ -318,15 +359,29 @@ node scripts/rotate.mjs --topic <slug>
 - **时区不是 topic 级**:v1 全局只有一个 `timezone`。跨时区多 topic 要到 v2
 - **article cache 跨月不复用**:同一篇文章 5 月被引用缓存到 `2026-05/`,6 月再引会在 `2026-06/` 再抓一次。故意简化,让 rotate 能无脑整目录搬
 - **外链不抓**:设计边界。社交语境不等于"知识图谱",外站内容太杂,值得抓的走 twitter article 这条已登录可控的路
+- **凌晨跑 `report now` 会 wrap 到昨天**:这是设计行为,`date` / `raw` / `wiki` / `window` 一起回退到**昨天的最后一个 slot**。想看**今天**某个 slot 的报告要等该 slot 时段后再跑,或显式 `report <slot>`
+- **显式 `report <slot>` 的 end 是 canonical 而非 now**:`report noon` 在 01:07 跑,endLabel=下一 slot 的 start(比如 evening 的 `18:00`)——不会因为现在才 01:07 就把窗口 end 设成 01:07 / 反向
+- **`since_prev` 首 slot fallback 到 today**:想让 morning 真正覆盖昨晚 overnight,需要在 `slots[0].start_hour` 之前跑 `report now`(会 wrap 回昨日末 slot,归属日完整 24h)。不要在 morning prompt 里暗示"过去 12-15h 包含昨晚",当前实现不支持跨昨日 raw
+- **prompt 里硬编码小时数**:不要在模板里写"过去 5h""完整 24h",用 `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}` 占位符,这样改 SCHEMA.slots.window 会自动生效,不用改两处(ai-radar 三个 prompt 是参考样例)
+- **raw 里"晚到的旧推文"**:collect 每次运行整体按时间重排写盘(`splitRawBlocks` + `mergeBlocksByTimeDesc`),所以晚一轮才抓到的旧推文会被插到文件中的正确位置,不会破坏全局倒序
 
 ---
 
 ## 9. 给 agent 的导航
 
-- 代码入口(按调用顺序):`scripts/collect.mjs` → `lib/x-fetcher.mjs` → `lib/x-adapter.mjs` → `lib/normalize.mjs` → `lib/wiki.mjs`
-- 报告入口:`scripts/report.mjs` → prompt 模板 → Claude 会话接棒 → 写 `wiki/daily/...`
-- 按需深抓:`scripts/fetch-article.mjs` → `lib/article-cache.mjs`
-- 归档:`scripts/rotate.mjs` → `lib/rotate.mjs`
-- Topic 加载:`lib/topic.mjs`(所有脚本的共同入口)
+**代码入口(按调用顺序)**:
+- collect: `scripts/collect.mjs` → `lib/x-fetcher.mjs` → `lib/x-adapter.mjs` → `lib/normalize.mjs`(formatTweet / dedupTweets / splitRawBlocks / mergeBlocksByTimeDesc)
+- report: `scripts/report.mjs` → prompt 模板 + 占位符替换 → Claude 会话接棒 → 写 `wiki/daily/...`
+- 按需深抓: `scripts/fetch-article.mjs` → `lib/article-cache.mjs`
+- 归档: `scripts/rotate.mjs` → `lib/rotate.mjs`
+- Topic 加载: `lib/topic.mjs`(所有脚本的共同入口;`DEFAULT_SLOTS` 也从这里导出)
+- Topic 脚手架: `scripts/new-topic.mjs`(`scaffoldTopic` / `validateTopicSpec` / `renderSchemaMd` / `renderSlotPrompt` 四个可 import 的纯函数)
 
-修改代码前必读 `CLAUDE.md` 和 `docs/DESIGN.md`。不要越过 Fetch / Business / Tool 三层分工(见 DESIGN §2.1)。
+**给自动化 agent 的关键约束**:
+- **新建 topic** → 首选 `scripts/new-topic.mjs --from-json <spec>`(有校验、幂等、不覆盖已有配置);`spec.slots` 可省略自动 fallback DEFAULT_SLOTS
+- **不要手工拼** SCHEMA.md + config.json — 容易漏校验(slot name `^[a-z][a-z0-9-]*$`、不得为 `now`、start_hour 0-23、window 枚举、source slug 唯一…)
+- **不要把时间窗口写死在 prompt 模板**里 — 用 `{WINDOW_*}` 占位符,让 SCHEMA.slots 成为单一 source of truth
+- **生成报告优先用 `report now`** — 时区 / wrap / 归属日期 / endLabel 全自动;显式 slot 用于补跑或复盘(end 是 canonical 不是 now)
+- **读 raw 别假设"今天"就是 CLI 触发那天** — 永远用 prompt 里的 `{DATE}` 占位符(wrap 场景下它指昨天)
+
+**修改代码前**必读 `CLAUDE.md` 和 `docs/DESIGN.md`。不要越过 Fetch / Business / Tool 三层分工(见 DESIGN §2.1)。
