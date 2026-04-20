@@ -34,23 +34,18 @@
   ],
   "slots": [
     {
-      "name": "early",
-      "start_hour": 6,
-      "window": "today"
-    },
-    {
       "name": "morning",
-      "start_hour": 10,
+      "start_hour": 9,
       "window": "today"
     },
     {
       "name": "afternoon",
-      "start_hour": 14,
+      "start_hour": 15,
       "window": "today"
     },
     {
-      "name": "evening",
-      "start_hour": 19,
+      "name": "night",
+      "start_hour": 23,
       "window": "today"
     }
   ]
