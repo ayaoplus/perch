@@ -2,7 +2,7 @@
 
 ## 任务
 
-基于 `~/your-data-dir/ai-radar/raw/daily/YYYY-MM-DD.md`（完整 24 小时数据），生成全天主报告。
+基于 `{RAW_PATH}`（{DATE} 完整 24 小时数据），生成全天主报告。
 
 ## 时间窗口
 
@@ -194,7 +194,7 @@ Signal: 🟢🟢🟢
 
 ## 附加任务：更新 summaries.md
 
-生成完报告后，**追加一条当日概览到 `~/your-data-dir/ai-radar/summaries.md`**：
+生成完报告后，**追加一条当日概览到 `{SUMMARIES_PATH}`**：
 
 ```markdown
 ## YYYY-MM-DD
@@ -205,4 +205,4 @@ Signal: 🟢🟢🟢
 
 ## 写入路径
 
-`~/your-data-dir/ai-radar/wiki/daily/YYYY-MM-DD-evening.md`
+`{WIKI_PATH}`

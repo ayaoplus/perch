@@ -2,7 +2,7 @@
 
 ## 任务
 
-基于 `~/your-data-dir/ai-radar/raw/daily/YYYY-MM-DD.md`，生成午间快讯。
+基于 `{RAW_PATH}`（{DATE} 的当日 raw），生成午间快讯。
 
 ## 时间窗口
 
@@ -97,4 +97,4 @@
 
 ## 写入路径
 
-`~/your-data-dir/ai-radar/wiki/daily/YYYY-MM-DD-noon.md`
+`{WIKI_PATH}`

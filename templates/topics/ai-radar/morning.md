@@ -2,7 +2,7 @@
 
 ## 任务
 
-基于 `~/your-data-dir/ai-radar/raw/daily/YYYY-MM-DD.md`，生成当日早间简报。
+基于 `{RAW_PATH}`（{DATE} 的当日 raw），生成当日早间简报。
 
 ## 时间窗口
 
@@ -62,7 +62,7 @@
 ```markdown
 # 🌅 AI Radar 早间简报 — YYYY-MM-DD
 
-**数据窗口**: {具体时间范围} | **采集源**: X List "AI KOL" | **新增推文**: {N 条}
+**数据窗口**: {具体时间范围} | **采集源**: {SOURCES} | **新增推文**: {N 条}
 
 ---
 
@@ -109,4 +109,4 @@ Signal: ...
 
 ## 写入路径
 
-`~/your-data-dir/ai-radar/wiki/daily/YYYY-MM-DD-morning.md`
+`{WIKI_PATH}`

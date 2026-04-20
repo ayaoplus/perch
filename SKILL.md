@@ -14,10 +14,11 @@ description:
 
 **完整架构、风险、路线图、术语全部在 `docs/DESIGN.md`。任何实现前请先读。开发任务拆解见 `docs/TASKS.md`。**
 
-## 当前状态:v1 骨架阶段
+## 当前状态:v1 实现中
 
-- **已完成**:项目骨架 + Step 1(vendor CDP + X fetcher) + `ai-radar` topic 的配置和模板
-- **下一步**:路线图 Step 1 — Vendor CDP 瘦核(源:`~/development/anyreach/`)
+- **已完成代码**:Step 1(vendor CDP + X fetcher) + Step 2(`ai-radar` topic + collect) + Step 3(report 脚手架) + Step 4(rotate 脚本)
+- **待 live review gate**:S2.5(collect 端到端)、S3(wiki 产出质量)、S4(rotate 手跑归档)
+- **下一步**:review gate 过后按需展开 Step 5(加第二个 topic 验证配置化)
 
 ## 核心概念(3 个)
 
@@ -48,10 +49,30 @@ description:
 | `~/development/ikiw/` | 思想同源的知识库框架,prompt 可 copy |
 | `~/development/ai-radar/` | 前身项目,保留但冻结 |
 
-## 命令(规划中,v1 逐步实现)
+## 命令
 
-- `/perch collect [--topic <name>]` — 采集 Topic 数据
-- `/perch report [morning|noon|evening|now] [--topic <name>]` — 生成时段 Daily Wiki
-- `/perch wiki "主题" [--topic <name>]` — 生成 Topic Wiki
-- `/perch rotate [--dry-run] [--topic <name>]` — 月度归档
-- `/perch query "问题" [--topic <name> | --all]` — 跨 Topic 查询
+### v1 已实现
+
+| 命令 | 底层脚本 | 工作模式 |
+|---|---|---|
+| `/perch collect [--topic <slug>] [--dry]` | `scripts/collect.mjs` | 纯自动化:抓 X → dedup + readExistingIds → sort → 写 raw |
+| `/perch report [morning\|noon\|evening\|now] [--topic <slug>]` | `scripts/report.mjs` | **Skill 模式**(见下) |
+| `/perch rotate [--dry-run] [--topic <slug>]` | `scripts/rotate.mjs` | 纯自动化:搬非当月 `raw/daily/*` 和 `wiki/daily/*` 到 `archive/YYYY-MM/` |
+
+### v1 明确不实现(DESIGN §8)
+
+- `/perch wiki "主题"` — Topic Wiki stale / rebuild 机制
+- `/perch query "..."` — 跨 topic 查询
+
+### 为什么 report 走 Skill 模式(和 collect / rotate 不同)
+
+`collect` 和 `rotate` 是**确定性任务**(纯 IO,不需要智能):脚本自己跑完即可,将来 cron 化无障碍。
+
+`report` 需要 LLM 智能(morning / noon / evening 的 Q1–Q17 判断都是内容分析),v1 走 **Skill 模式**:
+
+1. `scripts/report.mjs` 读 topic 配置 + 对应时段的 prompt 模板
+2. 把模板里的 `{RAW_PATH}` / `{WIKI_PATH}` / `{SUMMARIES_PATH}` / `{SOURCES}` / `{DATE}` 等占位符填实
+3. 完整 prompt 打到 stdout
+4. **当前 Claude 会话读到 stdout 后接棒**:读 raw → 按 prompt 生成 wiki 内容 → 写入 `{WIKI_PATH}`(evening 时额外追加一条到 `{SUMMARIES_PATH}`)
+
+所以 `/perch report` 不直接产出 wiki,是"让 Claude 产出 wiki"。cron 自动化(无会话依赖、直接调 Anthropic API)留 v2。

@@ -74,7 +74,13 @@
 
 ## Step 3 — Daily Wiki 生成(morning/noon/evening)
 
-将 `templates/topics/ai-radar/` 下三份时段 prompt 适配到新 raw 结构、实现 `summaries.md` 读写、`wiki/daily/` 产出、`/perch report` 入口。**prompt 对齐新 raw 结构的工作量不小,预留打磨时间**。
+**v1 走 Skill 模式**:`scripts/report.mjs` 把 prompt 占位符填好打到 stdout,**当前 Claude 会话接棒**读 raw → 生成 wiki → 写盘。cron 自动化(直接调 API、无会话依赖)留 v2。
+
+- [x] **S3.1 三份时段 prompt 模板化** — 改硬编码路径 / source label 为 `{RAW_PATH}` / `{WIKI_PATH}` / `{SUMMARIES_PATH}` / `{SOURCES}` / `{DATE}` 占位符。业务内容(Q 题目、时间窗、判定规则、格式要求)原样保留
+- [x] **S3.2 `lib/wiki.mjs`** — `rawDailyPath` / `wikiDailyPath` / `summariesPath` 三个纯路径函数 + `prependSummaryEntry`(在 summaries.md 顶部 `<!-- -->` 注释之后插入日条目,保持时间倒序)
+- [x] **S3.3 `scripts/report.mjs`(`/perch report` 入口)** — 解析 slot(`now` 按 topic.timezone 映射:5–11 morning / 12–17 noon / 其他 evening)、读对应 prompt 模板、做占位符替换、stdout 输出完整 prompt
+- [x] **S3.4 SKILL.md 命令说明** — v1 已实现命令表 + Skill 模式说明(为什么 report 和 collect/rotate 工作方式不同)
+- [ ] **S3.5 ★ Review gate:Claude 真跑一次 morning / noon / evening** — 验证 wiki 内容质量、写盘路径正确、evening 的 summaries.md 追加正常,以及占位符都被正确替换(没漏掉 `{XXX}` 字样)
 
 ## Step 4 — 月度 rotate 脚本
 
