@@ -42,6 +42,30 @@
 - **中间固定**(所有 Topic 共用):raw 格式、summaries 规范、frontmatter、归档生命周期、rotate 脚本
 - **两头扩展**:Source 端平行加新数据源,Processor 端平行加新产出形态
 
+### 2.1 运行时分层:Fetch / Business / Tool
+
+除了上述"插件化"维度,代码内部还按三层组织职责,**业务语义(pinned、时间窗、跨次去重)只落在 Business 层**:
+
+| 层 | 位置 | 做什么 | **不**做什么 |
+|---|---|---|---|
+| **Fetch** | `lib/x-fetcher.mjs` | 打开 X 页面,按 DOM 顺序返回 N 条原始 tweet | 不排序、不做时间窗过滤、不识别 pinned |
+| **Business** | `collect`(Step 2)、未来 Processor | 编排真实业务流:generous limit + 时间窗增量 + 跨次去重 + 按时间排序追加 | 不直接碰 CDP / 页面 DOM |
+| **Tool** | `lib/normalize.mjs` | 可组合原子:`formatTweet` / `dedupTweets` / `sortTweetsByTime` / `readExistingIds` | 不做业务流编排 |
+
+**为什么这么分**:S1.6 review 时 Codex 现场发现 `fetchXProfile(.., {limit:5})` 顶部是 pinned(可能几个月前的推文),"顺序错"只是表象,**本质是 pinned 挤占一个位置导致最老应收推文漏采**。如果修法是"在 Fetch 层默认按时间排 + 过滤 pinned",就把业务语义污染到底层 API,将来"想保留 pinned"或"想要 DOM 原序"的场景就得反向 opt-out。反过来保持 Fetch 干净,业务层按场景(如 collect 的"从上次运行到现在增量抓取")自行组合,扩展性和可测试性都更好。
+
+**真实业务场景(Step 2 collect 管线示意)**:
+
+```
+fetchXList/Profile(generous limit,例如 80~200)
+  → normalize.sortTweetsByTime(items)
+  → 按 `authoredAt > lastRunTime` 做时间窗过滤
+  → normalize.dedupTweets(跨多源合并) + readExistingIds(对比当日 raw 文件)
+  → formatTweet 追加写盘
+```
+
+预期跑频 3~4 次/天,每次拉一个覆盖上次运行到现在的时间窗。generous limit 的作用是**给 pinned / DOM 抖动 / 当日高频账号留余量**,让时间窗过滤兜底而不是让 limit 卡边界。
+
 ---
 
 ## 3. 核心概念
