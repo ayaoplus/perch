@@ -8,7 +8,7 @@ description:
 
 # Perch
 
-> 基于 ikiw 思想的 X 数据处理框架。每个 Topic = 一组 X 数据源 + 一套 LLM 工作流。
+> 基于 ikiw 思想的互联网数据处理框架。每个 Topic = 一组数据源 + 一套 LLM 工作流。
 
 ## ⚠️ 必读:设计规范
 

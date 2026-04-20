@@ -1,6 +1,6 @@
 # Perch — 设计规范
 
-> 基于 ikiw 思想的 X 数据处理框架 · 多 Topic 个人信息漏斗
+> 基于 ikiw 思想的互联网数据处理框架 · 多 Topic 个人信息漏斗
 
 **状态**:重构设计文档。现 `ai-radar` skill 会作为首个 Topic 被迁移进来。
 
