@@ -67,6 +67,9 @@
 - [x] **S2.4 `scripts/collect.mjs`(`/perch collect` 入口)** — 按 DESIGN §2.1 管线:对每个 source 调 fetchXList/fetchXProfile → dedupTweets 跨源合并 → readExistingIds diff → sortTweetsByTime → formatTweet 追加(带 via 行)到 `raw/daily/YYYY-MM-DD.md`。支持 `--dry` 和 `--topic`。不实现时间窗状态(ID 去重已覆盖,DESIGN §2.1 同步简化)
   - 顺带改:`lib/normalize.mjs` `formatTweet` 加 `options.source` 参数 → 渲染 `via:` 行;DESIGN §2.1 pipeline 简化去掉 lastRunTime;DESIGN §4.1/§4.2 目录结构更新(加 `scripts/` / `topic.mjs` / `templates/topics/` SCHEMA,数据目录去掉 SCHEMA)
 - [ ] **S2.5 ★ Review gate #3:端到端跑通 `ai-radar` collect** — raw 文件按 DESIGN §5 格式写入,多次跑累积不漏不重
+  - **Codex 第一轮(2026-04-20)**:✅ loadTopic / SCHEMA 解析、✅ 首次文件创建带头部 + Sources 列表、✅ block 格式(`## @handle (Name) · MM-DD · [source]` + type + via + metrics + media/quote/link)、✅ 前插保持时间倒序、✅ ID 去重无重复 block。⚠️ **中级 finding**:单次 collect 不稳 — 第一次实跑拿到 11 条老推文但顶部是 04-17、紧接第二次实跑才补齐 04-20 的 6 条。根因是 X timeline **lazy DOM**:首次 extract 看到的是 cache,最新推文由异步请求 append 到顶部
+  - **修法(已落盘)**:`lib/x-fetcher.mjs` 默认 2-pass extract — warmup 1.5s → extract1 → stabilize 3s → extract2(同一 tab,不 navigate)→ 按 statusId 合并。加 `options.stabilize=false` 给 spike / 单次探测 opt-out(默认 true)。Fetch 层 robustness,不穿透到 Business 层
+  - 待 Codex 第二轮复核确认单次抖动已吸收
 
 > 跑到 Step 2 收尾时,再回来把 Step 3-5 展开成子任务。
 
