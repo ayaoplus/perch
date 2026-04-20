@@ -6,7 +6,9 @@
 //            → sortTweetsByTime → formatTweet 追加到 raw/daily/YYYY-MM-DD.md
 //
 // 用法:
-//   node scripts/collect.mjs [--topic <slug>] [--dry]
+//   node scripts/collect.mjs [--topic <slug>] [--dry] [--limit N]
+//
+// --limit N  覆盖所有 source 的 fetch_limit(临时手动跑用,SCHEMA.md 里的值不变)
 //
 // 前置:用户日常 Chrome 已开远程调试端口(9222/9229/9333 其一)且已登录 X。
 // CDP Proxy 没跑的话 browser-provider 会自动 fork(日志 /tmp/perch-proxy.log)。
@@ -42,6 +44,15 @@ const hasFlag = (name) => argv.includes(`--${name}`);
 
 const topicSlug = getFlag('topic');
 const isDry = hasFlag('dry');
+const limitOverride = (() => {
+  const v = getFlag('limit');
+  if (v === null) return null;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 200) {
+    throw new Error(`--limit must be an integer in [1, 200], got: ${v}`);
+  }
+  return n;
+})();
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,8 +87,8 @@ const allFetched = [];  // 每条推文会被打上内部 `__via` 字段
 let fetchSuccessCount = 0;
 
 for (const src of topic.sources) {
-  const limit = src.fetch_limit || 80;
-  log(`→ fetching source "${src.slug}" (${src.type}, limit=${limit})`);
+  const limit = limitOverride ?? src.fetch_limit ?? 80;
+  log(`→ fetching source "${src.slug}" (${src.type}, limit=${limit}${limitOverride != null ? ' · CLI override' : ''})`);
   try {
     const result = src.type === 'list'
       ? await fetchXList(src.target, { limit })
