@@ -2,18 +2,20 @@
 
 ## 项目定位
 
-Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 用户时间线)采集数据,经过清洗与 LLM 工作流后,产出 Daily Wiki、Topic Wiki 和后续衍生产物。
+Perch 是一个**多 Topic 的互联网数据处理框架**。当前 v1 的首个落地方向仍是 X:围绕不同主题,从 X(List / 用户时间线)采集数据,经过清洗与 LLM 工作流后,产出 Daily Wiki、Topic Wiki 和后续衍生产物。
 
 完整设计先看 `docs/DESIGN.md`。任务拆解先看 `docs/TASKS.md`。两者比本文件优先级更高。
 
 ## 当前仓库状态
 
-这是 **v1 骨架阶段** 的仓库,设计先行,实现尚未铺开:
+这是 **v1 早期实现阶段** 的仓库。Step 1 已经基本落地,不再是纯骨架:
 
-- `lib/` 目前还是空壳,后续会 vendor `~/development/anyreach/` 的最小 CDP / X 抓取能力
+- `lib/` 已落入 Step 1 的核心代码:vendor 进来的 `browser-provider.mjs` / `cdp-proxy.mjs` / `proxy-client.mjs` / `x-adapter.mjs` / `_utils.mjs`,以及 perch 自己的 `x-fetcher.mjs` / `normalize.mjs`
 - `sources/` 和 `processors/` 目前是占位目录,还没进入插件化实现
 - `templates/topics/ai-radar/` 已放入早 / 午 / 晚三份报告模板
 - `config.json` 已定义默认 topic `ai-radar` 及其数据目录
+- `scripts/spike-list.mjs` 已存在,用于 S1.4 list review gate
+- Step 1 里仍未完全关门的是 **S1.6 profile live spike / review gate**
 
 不要把设计文档里的未来能力误判成“仓库里已经实现”。
 
@@ -24,7 +26,8 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
 - `docs/DESIGN.md`:架构、概念、风险、路线图
 - `docs/TASKS.md`:当前阶段可执行任务清单
 - `config.json`:默认 topic、topic 路径、rotate 配置
-- `lib/`:中间固定层。放 vendor 后的 CDP client、X fetcher、normalize、rotate 等共享代码
+- `lib/`:中间固定层。当前已含 vendor 进来的 CDP / X 抓取栈,以及 perch 的高层入口与 normalize
+- `scripts/`:review gate / spike 脚本。当前已有 `spike-list.mjs`; `spike-profile.mjs` 仍待补齐
 - `sources/`:采集端定义或文档。v1 主要是 `x-list` / `x-user`
 - `processors/`:产出端定义或文档。v1 先围绕 report 能力
 - `templates/topics/<topic>/`:topic 级 prompt / 模板
@@ -32,7 +35,7 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
 ## 工作原则
 
 1. 动手前先读 `CLAUDE.md`、`docs/DESIGN.md`、`docs/TASKS.md`，再看相关目录现状。
-2. 优先遵循 `docs/TASKS.md` 的当前步骤。现阶段重点是 **Step 1 — Vendor CDP 瘦核 + X fetcher**。
+2. 优先遵循 `docs/TASKS.md` 的当前步骤。现阶段仍在 **Step 1 — Vendor CDP 瘦核 + X fetcher**，但重点已收缩到 **S1.6 profile live gate** 与其收尾。
 3. 参考 / vendor 代码时,只读本地上游:
    - `~/development/anyreach/`
    - `~/development/ikiw/`
@@ -40,7 +43,8 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
    不要为这些内容再去网上找替代实现。
 4. `~/development/ai-radar/` 是冻结的参考源,不是运行时代码。新开发全部落在当前仓库。
 5. 不要提前实现 v1 明确排除的能力:Topic Wiki stale / rebuild、跨 topic 查询、Processor 插件化、SQLite 索引层。
-6. 当前仓库代码量很少,先把最小链路跑通,不要为了“未来扩展”过度抽象。
+6. 不要把“profile 代码路径已存在”误判成“profile gate 已通过”。S1.6 必须用真实 profile live spike 验证结果质量,尤其是顺序、置顶 tweet、字段形态是否稳定。
+7. 仓库还小,但 Step 1 的主链路已经成形。优先补齐当前 gate 和 collect 调用链,不要为了“未来扩展”过度抽象。
 
 ## 实现偏好
 
@@ -71,9 +75,8 @@ Perch 是一个**多 Topic 个人信息漏斗**:围绕不同主题,从 X(List / 
 
 如果没有额外指令,默认按下面顺序理解任务优先级:
 
-1. 打通 `lib/` 里的 vendor CDP / X 抓取链路
-2. 打通 `normalize` 和 raw 落盘
-3. 迁移 `ai-radar` topic 配置并完成 `/perch collect`
-4. 再做 Daily Wiki 生成与 rotate
+1. 完成 **S1.6 profile live spike**:补 `scripts/spike-profile.mjs`,验证 profile 来源的 normalize 输出是否可直接复用 list 路径
+2. 收 Step 1 尾巴后推进 Step 2:topic 配置加载 + `/perch collect` + raw 落盘
+3. 再做 Daily Wiki 生成与 rotate
 
 不要跳过前面的采集链路,直接去做高层报告命令。
