@@ -29,10 +29,11 @@
   - 交付:`lib/normalize.mjs` 导出 4 个函数
   - 验证:输出格式与 ai-radar 现有 raw 文件一致;端到端跑盘留到 S1.4
 
-- [ ] **S1.4 ★ Review gate #1:list 抓取链路跑通**
-  - 动作:写 `scripts/spike-list.mjs` 串起 S1.1 + S1.2 + S1.3,用 ai-radar 现有的 list URL 跑一次,输出到 stdout
-  - 交付:一段真实的 normalized tweet markdown(至少 3 条)
-  - 验证:格式与 ai-radar 当前产出对齐,ID 唯一,时间倒序
+- [x] **S1.4 ★ Review gate #1:list 抓取链路跑通**
+  - 动作:`scripts/spike-list.mjs` 落盘,串起 S1.1 + S1.2 + S1.3。外部 review agent 用等价一次性 harness 跑通真实 list,5/5 拿到结构正确的 markdown,链路通
+  - 顺手修的 bug:`readExistingIds` 只扫标题行 ID — 原实现把 block 里 quote 行的 ID 也计入,若该 tweet 日后真作为顶层出现会被误判重复(ai-radar vendor 来的固有缺陷)
+  - 文档对齐:DESIGN §5 raw 格式骨架补 `(Name)` + `MM-DD`,对齐 ai-radar / perch normalize 实际产出
+  - 验证:格式对齐、ID 唯一、时间倒序 — 全通过
 
 - [x] **S1.5 profile 入口打磨(代码工作量退化说明)**
   - 审视结果:anyreach x-adapter 已完整实现 profile 分支 — `_extractProfile`(行 1653)和 `_extractList`(行 1614)结构高度对称,共享底层 `collectTimelineItems` + `normalizeCard`,items 返回 shape 一致。DOM 假设基于 `data-testid` 选择器(UserName / UserDescription / UserUrl / ...),多语言计数(Posts/帖子 + 万/亿)已覆盖
