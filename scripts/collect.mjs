@@ -46,15 +46,20 @@ const hasFlag = (name) => argv.includes(`--${name}`);
 
 const topicSlug = getFlag('topic');
 const isDry = hasFlag('dry');
-const limitOverride = (() => {
+let limitOverride = null;
+{
+  // 非法 --limit 要走 `[collect] ERROR ...` 同一个报错路径,避免 Node 把 Error 栈直接
+  // 打到 stderr(过去是 `throw new Error(...)` 在模块顶层 IIFE,栈会渗漏给用户)。
   const v = getFlag('limit');
-  if (v === null) return null;
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < 1 || n > 200) {
-    throw new Error(`--limit must be an integer in [1, 200], got: ${v}`);
+  if (v !== null) {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 200) {
+      log(`ERROR: --limit must be an integer in [1, 200], got: ${JSON.stringify(v)}`);
+      process.exit(1);
+    }
+    limitOverride = n;
   }
-  return n;
-})();
+}
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
