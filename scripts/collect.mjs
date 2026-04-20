@@ -31,6 +31,8 @@ import {
   readExistingIds,
   dedupTweets,
   sortTweetsByTime,
+  splitRawBlocks,
+  mergeBlocksByTimeDesc,
 } from '../lib/normalize.mjs';
 
 // —— CLI 解析 ——
@@ -146,15 +148,16 @@ if (isDry) {
   process.exit(0);
 }
 
-// —— 写盘:新建或前插 ——
+// —— 写盘:新 block 和 existing block 合并后做**全局时间倒序**,避免"晚到的旧推文"
+//         被前插到文件最前(pinned 挤占、DOM 抖动、source 晚一轮才抓到都会触发) ——
 
-const newBlocks = sortedNew.map(t =>
+const newBlockStrs = sortedNew.map(t =>
   formatTweet(t, { timezone: topic.timezone, source: t.__via })
-).join('');
+);
 
 let finalContent;
 if (!existsSync(rawPath)) {
-  // 全新文件:加 header
+  // 全新文件:加 header + 新 block(新 block 本身已按时间倒序)
   const sourceLines = topic.sources
     .map(s => `- ${s.slug}: ${s.type} · ${s.target}`)
     .join('\n');
@@ -169,17 +172,13 @@ if (!existsSync(rawPath)) {
     '---',
     '',
   ].join('\n');
-  finalContent = header + newBlocks;
+  finalContent = header + newBlockStrs.join('');
 } else {
-  // 已有文件:把新 block 插到第一个 `## ` 标题之前,保持时间倒序
+  // 已有文件:拆 header + existing blocks,与新 block 合并后**全局**按 MM-DD HH:MM 倒序
   const existing = await readFile(rawPath, 'utf-8');
-  const firstHeadingIdx = existing.search(/^## /m);
-  if (firstHeadingIdx >= 0) {
-    finalContent = existing.slice(0, firstHeadingIdx) + newBlocks + existing.slice(firstHeadingIdx);
-  } else {
-    // 没有任何 block(比如只有 header),追加到末尾
-    finalContent = existing.endsWith('\n') ? existing + newBlocks : existing + '\n' + newBlocks;
-  }
+  const { header: existingHeader, blocks: existingBlocks } = splitRawBlocks(existing);
+  const merged = mergeBlocksByTimeDesc(existingBlocks, newBlockStrs);
+  finalContent = existingHeader + merged.join('');
 }
 
 await writeFile(rawPath, finalContent, 'utf-8');
