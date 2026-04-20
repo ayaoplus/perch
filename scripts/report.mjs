@@ -13,13 +13,18 @@
 // `now` 根据当前时间(topic.timezone)自动选:5–11→morning,12–17→noon,其他→evening。
 //
 // 占位符约定(prompt 模板可用这些):
-//   {TOPIC_SLUG}      — topic slug(例 ai-radar)
-//   {DATE}            — YYYY-MM-DD(按 topic.timezone)
-//   {SLOT}            — morning / noon / evening
-//   {RAW_PATH}        — 当日 raw 文件绝对路径
-//   {WIKI_PATH}       — 本次 wiki 产出的绝对路径
-//   {SUMMARIES_PATH}  — summaries.md 绝对路径
-//   {SOURCES}         — 人读的 source 描述(从 SCHEMA.sources 拼)
+//   {TOPIC_SLUG}         — topic slug(例 ai-radar)
+//   {DATE}               — YYYY-MM-DD(按 topic.timezone)
+//   {SLOT}               — 当前 slot name
+//   {RAW_PATH}           — 当日 raw 文件绝对路径
+//   {WIKI_PATH}          — 本次 wiki 产出的绝对路径
+//   {SUMMARIES_PATH}     — summaries.md 绝对路径
+//   {SOURCES}            — 人读的 source 描述(从 SCHEMA.sources 拼)
+//   {WINDOW_TYPE}        — today | since_prev(取自 slot.window,缺省 today)
+//   {WINDOW_START_LABEL} — 窗口起点,人读格式(如 "2026-04-20 00:00")
+//   {WINDOW_END_LABEL}   — 窗口终点(当前触发时刻),同上格式
+//   {ARTICLE_CACHE_DIR}  — 当月 article 缓存目录的绝对路径
+//   {FETCH_ARTICLE_CMD}  — 按需深抓 article 的命令行前缀(模板里直接拼 status URL 用)
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -28,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import { loadTopic } from '../lib/topic.mjs';
 import { getTodayDate } from '../lib/normalize.mjs';
 import { rawDailyPath, wikiDailyPath, summariesPath } from '../lib/wiki.mjs';
+import { articleCacheDir } from '../lib/article-cache.mjs';
 
 // "--X value" 形式的 flag,它们的 value 不该被当成 positional 参数。
 const VALUE_FLAGS = new Set(['--topic']);
@@ -73,8 +79,12 @@ if (!validSlots.includes(slotArg)) {
   process.exit(1);
 }
 
-const slot = slotArg === 'now' ? pickSlot(new Date(), topic.timezone, topic.slots) : slotArg;
+const now = new Date();
+const slot = slotArg === 'now' ? pickSlot(now, topic.timezone, topic.slots) : slotArg;
 const date = getTodayDate(topic.timezone);
+
+const slotDef = topic.slots.find(s => s.name === slot);
+const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date);
 
 const promptPath = path.join(topic.templatesDir, `${slot}.md`);
 let template;
@@ -94,6 +104,10 @@ const sourcesDesc = topic.sources
   })
   .join(' + ');
 
+// {FETCH_ARTICLE_CMD}:在 prompt 里直接拼 <status_url> 即可
+const rootDir_ = rootDir;
+const fetchArticleCmd = `node ${path.join(rootDir_, 'scripts', 'fetch-article.mjs')} --topic ${topic.slug}`;
+
 const filled = template
   .replace(/\{TOPIC_SLUG\}/g, topic.slug)
   .replace(/\{DATE\}/g, date)
@@ -101,9 +115,14 @@ const filled = template
   .replace(/\{RAW_PATH\}/g, rawDailyPath(topic, date))
   .replace(/\{WIKI_PATH\}/g, wikiDailyPath(topic, date, slot))
   .replace(/\{SUMMARIES_PATH\}/g, summariesPath(topic))
-  .replace(/\{SOURCES\}/g, sourcesDesc);
+  .replace(/\{SOURCES\}/g, sourcesDesc)
+  .replace(/\{WINDOW_TYPE\}/g, windowInfo.type)
+  .replace(/\{WINDOW_START_LABEL\}/g, windowInfo.startLabel)
+  .replace(/\{WINDOW_END_LABEL\}/g, windowInfo.endLabel)
+  .replace(/\{ARTICLE_CACHE_DIR\}/g, articleCacheDir(topic, date))
+  .replace(/\{FETCH_ARTICLE_CMD\}/g, fetchArticleCmd);
 
-log(`topic=${topic.slug} slot=${slot} date=${date}`);
+log(`topic=${topic.slug} slot=${slot} date=${date} window=${windowInfo.type} [${windowInfo.startLabel} → ${windowInfo.endLabel}]`);
 log(`rawPath=${rawDailyPath(topic, date)}`);
 log(`wikiPath=${wikiDailyPath(topic, date, slot)}`);
 
@@ -132,4 +151,43 @@ function pickSlot(now, timezone, slots) {
     else break;
   }
   return current.name;
+}
+
+// 计算 slot 的报告覆盖窗口,给 prompt 模板提供 {WINDOW_*} 占位符。
+//
+// window 语义:
+//   - 'today'     — 覆盖今日 00:00 至当前触发时刻
+//   - 'since_prev'— 覆盖上一 slot(按 start_hour 升序)的 start_hour 至当前触发时刻
+//     · 若当前 slot 是首个(没有上一 slot),fallback 为 today — 避免跨昨日 raw 的复杂度
+//
+// label 格式:`YYYY-MM-DD HH:MM`(raw 里 block 标题行是 `MM-DD HH:MM`,Claude 用这个比较可
+// 自行按时间过滤 block,不需要对 raw 做物理切片)。
+function computeWindow(slotDef, slotsAll, now, timezone, todayDate) {
+  const endLabel = `${todayDate} ${fmtHHMM(now, timezone)}`;
+  const windowType = slotDef?.window || 'today';
+
+  if (windowType === 'since_prev') {
+    const idx = slotsAll.findIndex(s => s.name === slotDef.name);
+    if (idx > 0) {
+      const prev = slotsAll[idx - 1];
+      const startLabel = `${todayDate} ${String(prev.start_hour).padStart(2, '0')}:00`;
+      return { type: 'since_prev', startLabel, endLabel };
+    }
+    // 首个 slot,退化为 today
+    return { type: 'today', startLabel: `${todayDate} 00:00`, endLabel };
+  }
+
+  return { type: 'today', startLabel: `${todayDate} 00:00`, endLabel };
+}
+
+function fmtHHMM(date, timezone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const h = parts.find(p => p.type === 'hour')?.value || '00';
+  const m = parts.find(p => p.type === 'minute')?.value || '00';
+  return `${h}:${m}`;
 }
