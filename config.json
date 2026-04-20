@@ -1,0 +1,17 @@
+{
+  "default_topic": "ai-radar",
+  "timezone": "Asia/Shanghai",
+  "topics": {
+    "ai-radar": {
+      "path": "/absolute/path/to/your-data-dir/ai-radar",
+      "description": "AI 博主每日选题漏斗(从 ai-radar 项目迁入的首个 Topic)",
+      "templates_dir": "templates/topics/ai-radar"
+    }
+  },
+  "rotate": {
+    "enabled": false,
+    "day_of_month": 1,
+    "keep_months_active": 1
+  },
+  "schema_version": "0.1.0-skeleton"
+}
