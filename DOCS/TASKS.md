@@ -14,20 +14,20 @@
 
 ### 子任务
 
-- [ ] **S1.1 vendor CDP client → `lib/cdp-client.mjs`**
-  - 动作:读 `~/development/anyreach/` 源码,圈定最小必要文件(启动/连接真实 Chrome、页面导航、evaluate、DOM 读取),裁掉其他 adapter、proxy server、CLI 入口
-  - 交付:`lib/cdp-client.mjs`(单文件或小目录,不带无关依赖)
-  - 验证:`node` 里 import 能加载,demo 能连上一个已开的 Chrome tab 并取到 title
+- [x] **S1.1 vendor CDP 栈(5 个文件 + 2 处 patch)**
+  - 动作:从 `~/development/anyreach/` 把 `browser-provider.mjs`(Chrome + Proxy 生命周期,user/managed 双模式)、`cdp-proxy.mjs`(HTTP-over-CDP bridge 子进程)、`proxy-client.mjs`(HTTP 客户端)、`x-adapter.mjs`(1700+ 行 X 抓取逻辑)、`_utils.mjs`(sleep/downloadFile)原样复制进 `lib/`
+  - 交付:上述 5 个 vendor 文件 + `browser-provider.mjs` 内的 2 处 `[perch vendor]` patch(cdp-proxy 路径改为同级、log 文件名 `anyreach-proxy.log → perch-proxy.log`)
+  - 验证:5 个文件就位,`proxy-client.mjs` 的 `ProxyClient` 可 import;端到端跑通留到 S1.4 review gate
 
-- [ ] **S1.2 vendor X list adapter → `lib/x-fetcher.mjs`(list 模式)**
-  - 动作:从 anyreach 的 X adapter 抽出 list 页抓取路径,导出 `fetchXList(url, options) → tweet[]`(原始对象,未格式化)
-  - 交付:`lib/x-fetcher.mjs` 只含 list 入口
-  - 验证:传入一个 list URL,返回 tweet 数组,字段覆盖 handle / text / time / metrics / media / quote|reply
+- [x] **S1.2 `lib/x-fetcher.mjs` 暴露 fetchXList / fetchXProfile**
+  - 动作:组合 `browser-provider` + `proxy-client` + `x-adapter`,对外提供两个 high-level 函数。默认 `mode='user'` 附着用户日常 Chrome。list 和 profile 走同一条 CDP 链路,差异只在 `x-adapter.detect(url)` 返回的 pageType
+  - 交付:`lib/x-fetcher.mjs`(list + profile 同文件,profile 真正 spike 留到 S1.5)
+  - 验证:list 端到端留到 S1.4;profile DOM 风险留到 S1.6
 
-- [ ] **S1.3 vendor 归一化逻辑 → `lib/normalize.mjs`**
-  - 动作:抄 `~/development/ai-radar/scripts/collect.mjs` 里的 `formatTweet` / `readExistingIds` / 时间格式化工具
-  - 交付:`lib/normalize.mjs` 导出 `normalizeTweet(raw) → markdown block` 和 `readExistingIds(filepath) → Set<id>`
-  - 验证:一个 tweet 原始对象 → 产出符合 DESIGN §5 raw 格式的 markdown block(`## @handle · HH:MM · [source](url)` + metrics + media)
+- [x] **S1.3 `lib/normalize.mjs`(tweet → raw block + 去重)**
+  - 动作:从 `~/development/ai-radar/scripts/collect.mjs` 沿袭 `formatTweet` / `formatLocalTime` / `getTodayDate` / `readExistingIds`(以及私有 `mlookup`),timezone 从参数传入,去掉对 config 的全局依赖
+  - 交付:`lib/normalize.mjs` 导出 4 个函数
+  - 验证:输出格式与 ai-radar 现有 raw 文件一致;端到端跑盘留到 S1.4
 
 - [ ] **S1.4 ★ Review gate #1:list 抓取链路跑通**
   - 动作:写 `scripts/spike-list.mjs` 串起 S1.1 + S1.2 + S1.3,用 ai-radar 现有的 list URL 跑一次,输出到 stdout
