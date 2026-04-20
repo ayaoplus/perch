@@ -80,16 +80,17 @@ if (!validSlots.includes(slotArg)) {
 }
 
 const now = new Date();
+const isNowMode = slotArg === 'now';
 
 // 解析当前 slot + 对应的归属日期。`now` 在凌晨(hour < 第一 slot 的 start_hour)会被
 // 折回昨天的最后一个 slot,**date 也要一起变成昨天**,否则 raw/wiki 路径和 window 都会
-// 指向错误的一天(High bug:反向时间窗、空 raw)。显式指定 slot(非 'now')保持今天日期。
-const { slot, date } = slotArg === 'now'
+// 指向错误的一天。显式指定 slot(非 'now')保持今天日期。
+const { slot, date } = isNowMode
   ? resolveNow(now, topic.timezone, topic.slots)
   : { slot: slotArg, date: getTodayDate(topic.timezone) };
 
 const slotDef = topic.slots.find(s => s.name === slot);
-const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date);
+const windowInfo = computeWindow(slotDef, topic.slots, now, topic.timezone, date, isNowMode);
 
 const promptPath = path.join(topic.templatesDir, `${slot}.md`);
 let template;
@@ -181,19 +182,19 @@ function shiftDate(ymd, deltaDays) {
 //   - 'since_prev'— 覆盖"归属日的 prev.start_hour" 至 endLabel;当前 slot 是首个(没有 prev)
 //                    时 fallback 为 today,避免跨昨日 raw
 //
-// endLabel:
-//   - 非 wrapped(date===today):当前触发时刻(`HH:MM`)
-//   - wrapped(date===昨天):归属日的最后一刻(`23:59`),因为报告语义是"回看昨天那个 slot"
-//     而不是"从昨天看到今天凌晨"。这样也保证 start < end,不会出反向窗口。
+// endLabel 逻辑:
+//   - isNowMode === true 且 !wrapped(即"现在就是这个 slot 的活跃时段"):用当前 HH:MM
+//   - 其它所有情况(wrapped now / 显式指定 slot):用该 slot 的 **canonical end** —— 下一 slot
+//     的 start_hour,或末 slot 的归属日 23:59。这避免"显式指定 slot 在 slot 时段之前触发"
+//     时 now 早于 startLabel 产生反向时间窗。
 //
-// label 格式:`YYYY-MM-DD HH:MM`(raw 里 block 标题行是 `MM-DD HH:MM`,Claude 按这个字符串
-// 自行比较即可)。
-function computeWindow(slotDef, slotsAll, now, timezone, date) {
+// label 格式:`YYYY-MM-DD HH:MM`(raw block 标题是 `MM-DD HH:MM`,Claude 按这个字符串比较)。
+function computeWindow(slotDef, slotsAll, now, timezone, date, isNowMode) {
   const today = getTodayDate(timezone);
   const wrapped = date !== today;
-  const endLabel = wrapped
-    ? `${date} 23:59`
-    : `${date} ${fmtHHMM(now, timezone)}`;
+  const endLabel = (isNowMode && !wrapped)
+    ? `${date} ${fmtHHMM(now, timezone)}`
+    : canonicalEndLabel(slotDef, slotsAll, date);
   const windowType = slotDef?.window || 'today';
 
   if (windowType === 'since_prev') {
@@ -208,6 +209,16 @@ function computeWindow(slotDef, slotsAll, now, timezone, date) {
   }
 
   return { type: 'today', startLabel: `${date} 00:00`, endLabel };
+}
+
+// 该 slot "按设计应该覆盖到哪一刻":非末 slot 到下一 slot 起点;末 slot 到归属日 23:59。
+function canonicalEndLabel(slotDef, slotsAll, date) {
+  const idx = slotsAll.findIndex(s => s.name === slotDef?.name);
+  if (idx >= 0 && idx < slotsAll.length - 1) {
+    const next = slotsAll[idx + 1];
+    return `${date} ${String(next.start_hour).padStart(2, '0')}:00`;
+  }
+  return `${date} 23:59`;
 }
 
 function fmtHHMM(date, timezone) {

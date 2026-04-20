@@ -12,8 +12,8 @@
     }
   ],
   "slots": [
-    { "name": "morning", "start_hour": 5, "window": "today" },
-    { "name": "noon", "start_hour": 12, "window": "today" },
+    { "name": "morning", "start_hour": 5, "window": "since_prev" },
+    { "name": "noon", "start_hour": 12, "window": "since_prev" },
     { "name": "evening", "start_hour": 18, "window": "today" }
   ]
 }

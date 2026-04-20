@@ -6,9 +6,15 @@
 
 ## 时间窗口
 
-**过去 12-15 小时**（约昨晚 17:00 到今早 08:00），重点是**海外 overnight 的动静**。
+- **类型**: {WINDOW_TYPE}
+- **起点**: {WINDOW_START_LABEL}
+- **终点**: {WINDOW_END_LABEL}
 
-如果 raw 文件覆盖时段不足，按实际可用数据生成，标注"数据窗口不完整"。
+按 raw block 标题行的 `MM-DD HH:MM` 时间戳过滤,只分析落在此窗口的推文。
+
+**morning 是首个 slot** — `since_prev` 会按 DESIGN §3.1 简化 fallback 到 `today`(归属日 00:00 起),**不跨昨日 raw**。如果当前窗口覆盖不到你想要的"海外 overnight",两种可选:
+1. 在凌晨 05:00 前跑 `node scripts/report.mjs now --topic ai-radar` — 会 wrap 回昨日 evening,那份报告以"归属日完整 24h"视角覆盖昨晚 + 昨日全天
+2. 如果 raw 文件时段确实不足,按实际可用数据生成,在报告里标注"数据窗口不完整"
 
 ## 聚焦题目（早间版 7 题）
 
