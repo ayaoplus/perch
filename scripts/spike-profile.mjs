@@ -61,7 +61,9 @@ for (const t of sorted) {
 }
 console.error('');
 
-// stdout 走排序后的 markdown,对齐 "真实业务想要的" 形态
+// stdout 走"pinned 沉底"后的 markdown,仅为方便 review 对账 — **不是**真实业务 output。
+// Business 层(Step 2 collect)要补回被 pinned 挤掉的最近推文,需要 generous limit +
+// 时间窗过滤,单靠 sortTweetsByTime 无法补齐被 fetch limit 砍掉的那条。
 for (const tweet of sorted) {
   process.stdout.write(formatTweet(tweet));
 }
