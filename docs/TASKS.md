@@ -68,8 +68,8 @@
   - 顺带改:`lib/normalize.mjs` `formatTweet` 加 `options.source` 参数 → 渲染 `via:` 行;DESIGN §2.1 pipeline 简化去掉 lastRunTime;DESIGN §4.1/§4.2 目录结构更新(加 `scripts/` / `topic.mjs` / `templates/topics/` SCHEMA,数据目录去掉 SCHEMA)
 - [ ] **S2.5 ★ Review gate #3:端到端跑通 `ai-radar` collect** — raw 文件按 DESIGN §5 格式写入,多次跑累积不漏不重
   - **Codex 第一轮(2026-04-20)**:✅ loadTopic / SCHEMA 解析、✅ 首次文件创建带头部 + Sources 列表、✅ block 格式(`## @handle (Name) · MM-DD · [source]` + type + via + metrics + media/quote/link)、✅ 前插保持时间倒序、✅ ID 去重无重复 block。⚠️ **中级 finding**:单次 collect 不稳 — 第一次实跑拿到 11 条老推文但顶部是 04-17、紧接第二次实跑才补齐 04-20 的 6 条。根因是 X timeline **lazy DOM**:首次 extract 看到的是 cache,最新推文由异步请求 append 到顶部
-  - **修法(已落盘)**:`lib/x-fetcher.mjs` 默认 2-pass extract — warmup 1.5s → extract1 → stabilize 3s → extract2(同一 tab,不 navigate)→ 按 statusId 合并。加 `options.stabilize=false` 给 spike / 单次探测 opt-out(默认 true)。Fetch 层 robustness,不穿透到 Business 层
-  - 待 Codex 第二轮复核确认单次抖动已吸收
+  - **修法(已落盘 `db0c5f2`)**:`lib/x-fetcher.mjs` 默认 2-pass extract — warmup 1.5s → extract1 → stabilize 3s → extract2(同一 tab,不 navigate)→ 按 statusId 合并。加 `options.stabilize=false` 给 spike / 单次探测 opt-out(默认 true)。Fetch 层 robustness,不穿透到 Business 层
+  - **Codex 第二轮**:基于 `6b1926e`(即 `db0c5f2` 修复之前的 commit)复述了同一 finding,数字完全一致。不是新问题,待基于 HEAD 重测以确认 2-pass 吸收已生效
 
 > 跑到 Step 2 收尾时,再回来把 Step 3-5 展开成子任务。
 
@@ -84,6 +84,10 @@
 - [x] **S3.3 `scripts/report.mjs`(`/perch report` 入口)** — 解析 slot(`now` 按 topic.timezone 映射:5–11 morning / 12–17 noon / 其他 evening)、读对应 prompt 模板、做占位符替换、stdout 输出完整 prompt
 - [x] **S3.4 SKILL.md 命令说明** — v1 已实现命令表 + Skill 模式说明(为什么 report 和 collect/rotate 工作方式不同)
 - [ ] **S3.5 ★ Review gate:Claude 真跑一次 morning / noon / evening** — 验证 wiki 内容质量、写盘路径正确、evening 的 summaries.md 追加正常,以及占位符都被正确替换(没漏掉 `{XXX}` 字样)
+  - **Codex 第二轮**:✅ 三个 slot 的 prompt 模板都能正确生成、占位符全部替换无残留;❌ 发现两个 bug 已修:
+    - **中级**:`report.mjs --topic ai-radar`(省略 slot)报错 "invalid slot 'ai-radar'",因为旧 CLI 解析把 `--topic` 的 value 当成 positional。修法:小 `parseArgs` 识别 VALUE_FLAGS 跳过其 value
+    - **低级**:`prependSummaryEntry` 非幂等,同日期重复调用会在 summaries.md 生成多个 `## YYYY-MM-DD`。修法:插入前调 `removeExistingDayEntry` 切掉旧条目(exact heading match,避开 `## 2026-04-20-suffix` 误伤)
+  - wiki 实际产出质量仍需 Claude 会话真接棒一次才能验
 
 ## Step 4 — 月度 rotate 脚本
 
@@ -95,6 +99,8 @@
 - [x] **S4.2 `scripts/rotate.mjs`(`/perch rotate` 入口)** — `--topic` / `--dry-run`,对每个可归档月份 plan → log → execute,路径以 `path.relative(topic.dataPath, ...)` 打印节省行宽
 - [x] **S4.3 幂等设计** — scan 是"找非当月 + 还没搬走的文件",搬走后下次 scan 自然找不到。无需额外 state
 - [ ] **S4.4 ★ Review gate:真月末跑一次 `--dry-run` 再实跑** — 验证 archive 目录结构正确(`archive/YYYY-MM/{raw,wiki}/daily/`)、原位置文件已被搬走、连跑第二次报告 "no archivable months"
+  - **Codex 第二轮**:✅ 用临时 fixture 目录验证了 `findArchivableMonths → planArchive → executePlan` 全链路,旧月 raw/daily 和 wiki/daily 文件能被搬到 `archive/YYYY-MM/`,再次 scan 变成 no-op(幂等 OK);真实 ai-radar 目录当前没有可归档月份,`--dry-run` 返回 "no archivable months" 符合预期
+  - 月末真实归档行为待真实月末 live gate
 
 ## Step 5 — 加第二个 topic(验证配置化)
 

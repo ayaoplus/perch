@@ -31,13 +31,32 @@ import { rawDailyPath, wikiDailyPath, summariesPath } from '../lib/wiki.mjs';
 
 const SLOTS = ['morning', 'noon', 'evening', 'now'];
 
-const argv = process.argv.slice(2);
-const getFlag = (name) => {
-  const i = argv.indexOf(`--${name}`);
-  return i >= 0 ? argv[i + 1] : null;
-};
-const slotArg = (argv.find(a => !a.startsWith('--')) || 'now').toLowerCase();
-const topicSlug = getFlag('topic');
+// "--X value" 形式的 flag,它们的 value 不该被当成 positional 参数。
+const VALUE_FLAGS = new Set(['--topic']);
+
+function parseArgs(args) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) {
+      const name = a.slice(2);
+      if (VALUE_FLAGS.has(a)) {
+        flags[name] = args[i + 1];
+        i++;  // skip value
+      } else {
+        flags[name] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { flags, positional };
+}
+
+const { flags, positional } = parseArgs(process.argv.slice(2));
+const slotArg = (positional[0] || 'now').toLowerCase();
+const topicSlug = flags.topic || null;
 
 if (!SLOTS.includes(slotArg)) {
   log(`ERROR: invalid slot "${slotArg}" — use one of: ${SLOTS.join(', ')}`);
