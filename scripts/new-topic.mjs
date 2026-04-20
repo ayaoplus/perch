@@ -21,6 +21,7 @@ import path from 'node:path';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_SLOTS } from '../lib/topic.mjs';
 
 // —— 可 import 的纯函数(便于 agent 驱动 / 单元验证)——
 
@@ -145,21 +146,27 @@ export function validateTopicSpec(spec) {
       }
     }
   }
-  if (!Array.isArray(spec.slots) || spec.slots.length === 0) return 'slots must be a non-empty array';
-  const slotNames = new Set();
-  const slotHours = new Set();
-  for (const [i, s] of spec.slots.entries()) {
-    if (!/^[a-z][a-z0-9-]*$/.test(s.name || '')) return `slots[${i}].name invalid`;
-    if (s.name === 'now') return `slot name "now" is reserved`;
-    if (slotNames.has(s.name)) return `slots has duplicate name "${s.name}"`;
-    slotNames.add(s.name);
-    if (!Number.isInteger(s.start_hour) || s.start_hour < 0 || s.start_hour > 23) {
-      return `slots[${i}].start_hour must be integer 0-23`;
+  // `slots` 省略是合法的 —— 和运行时 loadTopic.validateSlots() 保持一致:
+  // 缺省会 fallback 到 DEFAULT_SLOTS(v1 默认三槽)。但存在时必须合法。
+  if (spec.slots !== undefined) {
+    if (!Array.isArray(spec.slots) || spec.slots.length === 0) {
+      return 'slots, when present, must be a non-empty array';
     }
-    if (slotHours.has(s.start_hour)) return `slots has duplicate start_hour ${s.start_hour}`;
-    slotHours.add(s.start_hour);
-    if (s.window !== undefined && !['today', 'since_prev'].includes(s.window)) {
-      return `slots[${i}].window must be "today" or "since_prev"`;
+    const slotNames = new Set();
+    const slotHours = new Set();
+    for (const [i, s] of spec.slots.entries()) {
+      if (!/^[a-z][a-z0-9-]*$/.test(s.name || '')) return `slots[${i}].name invalid`;
+      if (s.name === 'now') return `slot name "now" is reserved`;
+      if (slotNames.has(s.name)) return `slots has duplicate name "${s.name}"`;
+      slotNames.add(s.name);
+      if (!Number.isInteger(s.start_hour) || s.start_hour < 0 || s.start_hour > 23) {
+        return `slots[${i}].start_hour must be integer 0-23`;
+      }
+      if (slotHours.has(s.start_hour)) return `slots has duplicate start_hour ${s.start_hour}`;
+      slotHours.add(s.start_hour);
+      if (s.window !== undefined && !['today', 'since_prev'].includes(s.window)) {
+        return `slots[${i}].window must be "today" or "since_prev"`;
+      }
     }
   }
   return null;
@@ -192,18 +199,24 @@ export async function scaffoldTopic(rootDir, spec) {
 
   const written = [];
 
+  // spec.slots 省略 → 用 DEFAULT_SLOTS;显式传入 → normalize window 默认 'today'。
+  // SCHEMA.md 总是**显式写出** slots,让人打开文件就能看到完整配置(不依赖运行时 fallback)。
+  const effectiveSlots = spec.slots === undefined
+    ? DEFAULT_SLOTS.map(s => ({ ...s }))
+    : spec.slots.map(s => ({ ...s, window: s.window || 'today' }));
+
   await mkdir(templatesDir, { recursive: true });
   const schemaPath = path.join(templatesDir, 'SCHEMA.md');
   const schemaBody = renderSchemaMd({
     topic: spec.topic,
     description: spec.description || spec.topic,
     sources: spec.sources,
-    slots: spec.slots.map(s => ({ ...s, window: s.window || 'today' })),
+    slots: effectiveSlots,
   });
   await writeFile(schemaPath, schemaBody, 'utf-8');
   written.push(schemaPath);
 
-  for (const slot of spec.slots) {
+  for (const slot of effectiveSlots) {
     const p = path.join(templatesDir, `${slot.name}.md`);
     await writeFile(p, renderSlotPrompt(spec.topic, slot), 'utf-8');
     written.push(p);
@@ -422,7 +435,7 @@ function printHelp() {
     "sources": [
       { "slug": "s1", "type": "list", "target": "https://x.com/i/lists/123", "label": "...", "fetch_limit": 80 }
     ],
-    "slots": [
+    "slots": [                                   // 省略整个 slots 字段 → 默认三槽 morning@5 / noon@12 / evening@18
       { "name": "morning", "start_hour": 6, "window": "today" }
     ]
   }\n`);

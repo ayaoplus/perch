@@ -137,7 +137,9 @@ const written = await scaffoldTopic(rootDir, spec);
 | `start_hour` | int 0-23 | ✅ | 该 slot 从几点起。加载时自动按 `start_hour` 升序排序 |
 | `window` | `"today"` \| `"since_prev"` | | 报告覆盖窗口,默认 `today` |
 
-**缺省整个 `slots` 字段**会 fallback 到三槽 `morning@5 / noon@12 / evening@18`(保留 v1 旧行为)。
+**缺省整个 `slots` 字段**会 fallback 到三槽 `morning@5 / noon@12 / evening@18`(保留 v1 旧行为)。这条 fallback 在两个层面生效:
+- **手写 SCHEMA.md** 时:loadTopic 运行时自动回填
+- **`new-topic.mjs --from-json`** 时:scaffoldTopic 也接受 spec 省略 `slots`,并会把 DEFAULT_SLOTS **显式写进**生成的 SCHEMA.md(这样 SCHEMA 文件打开就能看到完整配置,不依赖运行时行为)
 
 **window 语义**:
 - `today`:覆盖今日 00:00 → 当前触发时刻。适合"今天讨论最多的标的是什么"这种**累积统计型**问题。后段报告会涵盖前段内容(这不是 bug,而是特性)
