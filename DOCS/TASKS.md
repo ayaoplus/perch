@@ -34,10 +34,11 @@
   - 交付:一段真实的 normalized tweet markdown(至少 3 条)
   - 验证:格式与 ai-radar 当前产出对齐,ID 唯一,时间倒序
 
-- [ ] **S1.5 扩展 profile 模式 → `x-fetcher.mjs` 新增 `fetchXProfile(handle, options)`**
-  - 动作:打开一个 X 用户 profile 页,观察 DOM 差异,调整选择器。**这是 R1 spike,难度不确定**
-  - 交付:`fetchXProfile(handle)` 返回 shape 与 list 一致的 tweet 数组
-  - 验证:传入 `handle` 能拿到该用户最近推文,字段齐全
+- [x] **S1.5 profile 入口打磨(代码工作量退化说明)**
+  - 审视结果:anyreach x-adapter 已完整实现 profile 分支 — `_extractProfile`(行 1653)和 `_extractList`(行 1614)结构高度对称,共享底层 `collectTimelineItems` + `normalizeCard`,items 返回 shape 一致。DOM 假设基于 `data-testid` 选择器(UserName / UserDescription / UserUrl / ...),多语言计数(Posts/帖子 + 万/亿)已覆盖
+  - 动作:给 `fetchXProfile` 补输入 `trim()`,扩充 docstring 说明已支持的 URL 形态(`handle` / `@handle` / `handle/media` / 完整 URL)和返回 shape。x-adapter 内部代码**一行未改**
+  - 交付:`lib/x-fetcher.mjs` 的 `fetchXProfile` 注释 + 输入规范化
+  - 验证:真正的 DOM 选择器是否随 X 改版漂移,只有 S1.6 的 live spike 能答;本步交付为零风险代码
 
 - [ ] **S1.6 ★ Review gate #2:profile 抓取链路跑通**
   - 动作:`scripts/spike-profile.mjs` 跑一次 profile 抓取并 normalize
