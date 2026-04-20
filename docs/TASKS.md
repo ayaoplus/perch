@@ -84,7 +84,14 @@
 
 ## Step 4 — 月度 rotate 脚本
 
-`/perch rotate` 幂等 + `--dry-run`,把上月 raw + daily wiki + summaries 归档到 `archive/YYYY-MM/`。**Topic Wiki 不归档(长期资产)**。手跑验证多次再考虑上 cron(DESIGN §7 R4)。
+**v1 归档范围**:非当月的 `raw/daily/YYYY-MM-*.md` 和 `wiki/daily/YYYY-MM-*.md` → `archive/YYYY-MM/{raw,wiki}/daily/`。
+
+**v1 不归档**:Topic Wiki(长期资产)、`summaries.md`(按月切分较复杂,v2 再做;DESIGN §3.3 的 "按月 reset" 意图当前由 rotate 外的手工操作兜底)、`SCHEMA.md`(不在数据目录)。
+
+- [x] **S4.1 `lib/rotate.mjs`** — `currentMonth(tz)` + `findArchivableMonths(topic)`(扫 raw/daily 和 wiki/daily 文件前缀,返回去重排序的非当月 YYYY-MM)+ `planArchive(topic, month)`(返回 `{archiveDir, moves[]}`,moves 每项 `{from, to}`)+ `executePlan(plan)`(mkdir + rename)
+- [x] **S4.2 `scripts/rotate.mjs`(`/perch rotate` 入口)** — `--topic` / `--dry-run`,对每个可归档月份 plan → log → execute,路径以 `path.relative(topic.dataPath, ...)` 打印节省行宽
+- [x] **S4.3 幂等设计** — scan 是"找非当月 + 还没搬走的文件",搬走后下次 scan 自然找不到。无需额外 state
+- [ ] **S4.4 ★ Review gate:真月末跑一次 `--dry-run` 再实跑** — 验证 archive 目录结构正确(`archive/YYYY-MM/{raw,wiki}/daily/`)、原位置文件已被搬走、连跑第二次报告 "no archivable months"
 
 ## Step 5 — 加第二个 topic(验证配置化)
 
