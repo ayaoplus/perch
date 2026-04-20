@@ -38,8 +38,8 @@
 
 ## 时段报告语义
 
-- `report now` 在凌晨(hour < 首 slot.start_hour)会 wrap 到**昨天最后一个 slot**,`date` / `raw` / `wiki` 一起回退
-- 显式 `report <slot>` 的 endLabel 用 **canonical end**(下一 slot 起点或归属日 23:59),与触发时刻无关
+- **wrap 统一规则**:触发时 hour < 对应 slot 的 `start_hour` → `date` 回退到昨天(`now` 凌晨 / 显式 slot 在该 slot 今天起点前触发都走这条)。`date`、raw、wiki 一起回退
+- **endLabel**:归属日=昨天 → canonical end;归属日=今天 → `min(now, canonical)`。这同时杜绝反向窗口和未来窗口
 - prompt 模板**不要硬编码小时数**,用 `{WINDOW_*}` 占位符,让 SCHEMA.slots.window 成为单一 source of truth
 
 ## 状态

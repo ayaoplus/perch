@@ -91,24 +91,27 @@ fetchXList/Profile(generous limit,例如 80~200)          # 每个 source 独立
 
 window 不影响 raw 物理结构(仍是一日一文件),只通过 `{WINDOW_*}` 占位符注入到 prompt,让 Claude 自行按 `MM-DD HH:MM` 时间戳过滤 block。
 
-**报告 `now` 的 slot 映射 + 日期回退**(`report.mjs` 的 `resolveNow`):
+**slot 映射 + 日期回退**(`report.mjs` 的 `resolveSlotAndDate`,`now` 和显式指定共用一条路径):
 
-| 触发时刻 | 映射到 slot | 归属日期 `date` | 典型含义 |
+| slotArg | 触发时刻条件(hour 在 topic.timezone) | 映射 slot | 归属日期 `date` |
 |---|---|---|---|
-| hour ≥ `slots[0].start_hour` | 正常 pickSlot(hour 落在哪个区间) | **今天** | 那个 slot 正活跃 |
-| hour < `slots[0].start_hour`(凌晨 wrap) | **最后一个 slot**(昨晚那轮未闭合的) | **昨天** | 回看昨天末 slot 的报告 |
+| `now` | hour ≥ `slots[0].start_hour` | `pickSlot(hour)` | **今天** |
+| `now` | hour < `slots[0].start_hour` | **最后一个 slot**(凌晨 wrap) | **昨天** |
+| `<显式>` | hour ≥ `slotDef.start_hour` | 显式 slot | **今天**(该 slot 进行中 / 已过) |
+| `<显式>` | hour < `slotDef.start_hour` | 显式 slot | **昨天**(今天实例还没开始,看昨天那个) |
 
-**关键不变量**:wrap 场景下 `date`、`rawDailyPath(date)`、`wikiDailyPath(date, slot)`、窗口起止都同步指向昨天。之前"只 slot 名回退、date 不回退"会导致 `report now` 在凌晨 00:38 跑出 `slot=evening / raw=今天空文件 / window=00:00→00:38` 这种错位组合,甚至 `since_prev + wrapped` 组合下产生 `start > end` 的反向窗口。已修。
+**关键不变量**:`date`、`rawDailyPath(date)`、`wikiDailyPath(date, slot)`、窗口起止都由这个统一的 `date` 决定,**不会出现 date 不一致的错位组合**。
 
-**endLabel 的三种取值**(`computeWindow` 的 `isNowMode` 参数):
+**endLabel 语义**(`computeWindow` 里两种模式统一):
 
-| 触发方式 | 是否 wrap | `endLabel` 取值 |
-|---|---|---|
-| `report now`(isNowMode=true) | 否 | 当前时刻 `YYYY-MM-DD HH:MM` |
-| `report now`(isNowMode=true) | 是 | 归属日 `23:59`(回看昨天整天) |
-| `report <slot>`(显式指定) | — | 该 slot 的 **canonical end**:下一 slot 的 `start_hour:00`,最后一个 slot 用归属日 `23:59` |
+| 归属日 | endLabel |
+|---|---|
+| 昨天(wrap / 显式回退) | **canonical end**:下一 slot 的 `start_hour:00`,最后一个 slot 用归属日 `23:59` |
+| 今天 | **`min(now, canonical end)`**:slot 进行中取 `now`(到触发时刻),slot 已过取 canonical(不越界到下一 slot) |
 
-**为什么显式指定 slot 不用"now"**:显式 `report noon` 在凌晨 01:07 跑,如果用 now 作 endLabel 会算出 `05:00 → 01:07`(反向)。canonical end 的含义是"这个 slot 按设计应覆盖到哪一刻",与触发时刻无关。
+**两个同时杜绝的 bug**:
+- **反向窗口**(start > end):显式 `report noon` 在凌晨 01:07 曾算出 `05:00 → 01:07`。现 date 回退到昨天,end=昨天 canonical,start<end ✓
+- **未来窗口**(end > now 且数据还没发生):`report morning` 在 00:xx 曾算出今天 `00:00 → 12:00` 全未来。现 date 回退到昨天,端点都落在昨天内 ✓
 
 **Topic 脚手架**:`scripts/new-topic.mjs` 提供两种创建方式:交互向导(人用)和 `--from-json`(agent 用)。后者还暴露了 `scaffoldTopic` / `validateTopicSpec` / `renderSchemaMd` / `renderSlotPrompt` 四个可 import 的纯函数。`spec.slots` 省略时会 fallback 到 `DEFAULT_SLOTS`(从 `lib/topic.mjs` 导出的单一 source of truth),与运行时 `loadTopic` 的 fallback 行为对齐。详见 `docs/TOPIC_AUTHORING.md`。
 

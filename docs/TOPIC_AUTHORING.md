@@ -192,36 +192,46 @@ const written = await scaffoldTopic(rootDir, spec);
 
 **prompt 作者约定**:模板里**不要硬编码**"过去 12h""完整 24h"这种小时数,而是引用 `{WINDOW_TYPE}` / `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}`。这样 SCHEMA.slots 的 window 配置变更会自动反映到 prompt 里,不用改两处。ai-radar 的三份 prompt 是参考样例。
 
-### 3.4 `report now` 的 slot 映射 + 日期回退
+### 3.4 `report` 的 slot 映射 + 日期回退 + endLabel
 
-这是**所有 agent 在 prompt 处理 raw 时必须理解的语义**,避免用错日期。
+**所有 agent 在 prompt 处理 raw 时必须理解这一节**,避免用错日期或分析未来窗口。
 
-**映射规则**:
+`report.mjs` 对 `now` 和显式指定 slot 统一走同一条 `resolveSlotAndDate`,核心是"当 slot 在今天**还没开始**时,回退到昨天那个实例":
 
-| 触发时的小时(topic.timezone) | 映射 slot | `{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` |
-|---|---|---|
-| `hour ≥ slots[0].start_hour` | 正常 pickSlot | **今天**的 raw / wiki |
-| `hour < slots[0].start_hour`(凌晨 wrap) | **最后一个** slot | **昨天**的 raw / wiki |
+| slotArg | hour(topic.timezone)条件 | slot | `{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` |
+|---|---|---|---|
+| `now` | `hour ≥ slots[0].start_hour` | `pickSlot(hour)` | **今天** |
+| `now` | `hour < slots[0].start_hour`(凌晨 wrap) | **最后一个 slot** | **昨天** |
+| `<显式>` | `hour ≥ slotDef.start_hour` | 显式 slot | **今天** |
+| `<显式>` | `hour < slotDef.start_hour` | 显式 slot | **昨天** |
+
+**`{WINDOW_END_LABEL}` 规则**:
+
+| 归属日 | endLabel |
+|---|---|
+| 昨天 | **canonical end**:下一 slot 的 `start_hour:00`,末 slot 用归属日 `23:59` |
+| 今天 | **`min(now, canonical end)`**:slot 进行中→now(到触发时刻);slot 已过→canonical(不溢出到下一 slot) |
 
 **例子**(ai-radar slots=`morning@5 / noon@12 / evening@18`):
 
-- 00:38 跑 `report now` → `slot=evening`、`date=昨天`、raw 指向**昨天的 raw**、wiki 写到 `wiki/daily/<昨天>-evening.md`
-- 06:30 跑 `report now` → `slot=morning`、`date=今天`
-- 20:00 跑 `report now` → `slot=evening`、`date=今天`
+| 触发时刻 CST | 命令 | slot / date | window |
+|---|---|---|---|
+| 00:38 | `report now` | evening / 昨天 | `今天-1 00:00 → 23:59` |
+| 00:38 | `report noon` | noon / 昨天 | `今天-1 05:00 → 18:00` |
+| 00:38 | `report evening` | evening / 昨天 | `今天-1 00:00 → 23:59` |
+| 14:00 | `report now` | noon / 今天 | `今天 05:00 → 14:00`(进行中) |
+| 14:00 | `report noon` | noon / 今天 | `今天 05:00 → 14:00`(同上) |
+| 19:00 | `report noon` | noon / 今天 | `今天 05:00 → 18:00`(已过 → canonical) |
+| 23:30 | `report now` | evening / 今天 | `今天 00:00 → 23:30`(evening 进行中) |
 
-**`{WINDOW_END_LABEL}` 的三种取值**(取决于触发方式):
-
-| 触发方式 | 是否 wrap | endLabel |
-|---|---|---|
-| `report now`(isNowMode=true) | 否 | 当前时刻 `HH:MM` |
-| `report now` | 是(wrap) | 归属日 `23:59`(看昨天整天) |
-| `report <slot>`(显式指定) | — | 该 slot 的 **canonical end**:下一 slot 的 `start_hour:00`,最后一个 slot 用归属日 `23:59` |
-
-**为什么显式指定 slot 不用"now"**:显式 `report noon` 在凌晨 01:07 跑,若用 now 作 endLabel 会算出 `05:00 → 01:07`(反向)。canonical end 的含义是"这个 slot 按设计应覆盖到哪一刻",与触发时刻无关。
+**两个都能杜绝的 bug**:
+- **反向窗口**(start > end)— 曾在显式 slot 凌晨触发 + since_prev 下出现
+- **未来窗口**(endLabel 在 now 之后)— 曾在显式 slot 在 slot 时段前触发时出现
 
 **agent 使用建议**:
-- 自动化调度里,**推荐用 `report now`** —— 时区 + wrap 逻辑已封装,你不用算几点对应哪个 slot
-- 补跑或复盘时再用 `report <slot>` 显式指定。endLabel 会是 slot 的 canonical end,不会被当前时刻影响
+- **推荐用 `report now`** — 时区 / wrap / 日期 / endLabel 全自动
+- **显式 `report <slot>`** 在今天还没到该 slot 时,会自动指向**昨天**那个实例(当成"回看"/补跑)
+- **想生成"今天某个未来 slot"的报告**?等到那个 slot 时段再跑 — 今天还没发生的数据不能凭空分析
 
 ---
 
@@ -359,9 +369,9 @@ node scripts/rotate.mjs --topic <slug>
 - **时区不是 topic 级**:v1 全局只有一个 `timezone`。跨时区多 topic 要到 v2
 - **article cache 跨月不复用**:同一篇文章 5 月被引用缓存到 `2026-05/`,6 月再引会在 `2026-06/` 再抓一次。故意简化,让 rotate 能无脑整目录搬
 - **外链不抓**:设计边界。社交语境不等于"知识图谱",外站内容太杂,值得抓的走 twitter article 这条已登录可控的路
-- **凌晨跑 `report now` 会 wrap 到昨天**:这是设计行为,`date` / `raw` / `wiki` / `window` 一起回退到**昨天的最后一个 slot**。想看**今天**某个 slot 的报告要等该 slot 时段后再跑,或显式 `report <slot>`
-- **显式 `report <slot>` 的 end 是 canonical 而非 now**:`report noon` 在 01:07 跑,endLabel=下一 slot 的 start(比如 evening 的 `18:00`)——不会因为现在才 01:07 就把窗口 end 设成 01:07 / 反向
+- **凌晨跑 `report now` / 显式 slot 在该 slot 今天起点前触发会 wrap 到昨天**:这是设计行为,`date` / `raw` / `wiki` / `window` 一起回退到**昨天的那个 slot 实例**。想生成"今天某个未来 slot"的报告只能等(数据还没发生)
 - **`since_prev` 首 slot fallback 到 today**:想让 morning 真正覆盖昨晚 overnight,需要在 `slots[0].start_hour` 之前跑 `report now`(会 wrap 回昨日末 slot,归属日完整 24h)。不要在 morning prompt 里暗示"过去 12-15h 包含昨晚",当前实现不支持跨昨日 raw
+- **endLabel 绝不溢出到未来或下一 slot**:归属日=今天时,`end = min(now, canonical)`。slot 进行中就是"到触发时刻",slot 已过就 cap 在 canonical(下一 slot 的起点),不会把之后 slot 的数据混进这一份报告
 - **prompt 里硬编码小时数**:不要在模板里写"过去 5h""完整 24h",用 `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}` 占位符,这样改 SCHEMA.slots.window 会自动生效,不用改两处(ai-radar 三个 prompt 是参考样例)
 - **raw 里"晚到的旧推文"**:collect 每次运行整体按时间重排写盘(`splitRawBlocks` + `mergeBlocksByTimeDesc`),所以晚一轮才抓到的旧推文会被插到文件中的正确位置,不会破坏全局倒序
 
