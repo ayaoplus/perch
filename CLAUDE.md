@@ -21,7 +21,7 @@
 |---|---|
 | `~/development/anyreach/` | CDP Proxy + X adapter 源头。**lib/ 下的代码 vendor 自这里** |
 | `~/development/ikiw/` | 思想同源的知识库框架。prompt / frontmatter 规范可 copy |
-| `~/development/ai-radar/` | 前身项目。templates 已迁入;`scripts/collect.mjs` 里的 `formatTweet` / `readExistingIds` / 时间格式化函数都是稳定代码,vendor 入 `lib/normalize.mjs` 时直接抄 |
+| `~/development/ai-radar/` | 前身项目,保留但冻结。不作为运行时依赖;templates 和数据目录在 perch 里作为 `ai-radar` topic 继续存在 |
 
 ## 编码习惯
 

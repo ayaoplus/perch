@@ -25,14 +25,14 @@
   - 验证:list 端到端留到 S1.4;profile DOM 风险留到 S1.6
 
 - [x] **S1.3 `lib/normalize.mjs`(tweet → raw block + 去重)**
-  - 动作:从 `~/development/ai-radar/scripts/collect.mjs` 沿袭 `formatTweet` / `formatLocalTime` / `getTodayDate` / `readExistingIds`(以及私有 `mlookup`),timezone 从参数传入,去掉对 config 的全局依赖
-  - 交付:`lib/normalize.mjs` 导出 4 个函数
-  - 验证:输出格式与 ai-radar 现有 raw 文件一致;端到端跑盘留到 S1.4
+  - 动作:实现 `formatTweet` / `formatLocalTime` / `getTodayDate` / `readExistingIds` + 私有 `mlookup`,timezone 参数化
+  - 交付:`lib/normalize.mjs` 4 个导出函数
+  - 验证:端到端跑盘留到 S1.4
 
 - [x] **S1.4 ★ Review gate #1:list 抓取链路跑通**
-  - 动作:`scripts/spike-list.mjs` 落盘,串起 S1.1 + S1.2 + S1.3。外部 review agent 用等价一次性 harness 跑通真实 list,5/5 拿到结构正确的 markdown,链路通
-  - 顺手修的 bug:`readExistingIds` 只扫标题行 ID — 原实现把 block 里 quote 行的 ID 也计入,若该 tweet 日后真作为顶层出现会被误判重复(ai-radar vendor 来的固有缺陷)
-  - 文档对齐:DESIGN §5 raw 格式骨架补 `(Name)` + `MM-DD`,对齐 ai-radar / perch normalize 实际产出
+  - 动作:`scripts/spike-list.mjs` 落盘,串起 S1.1 + S1.2 + S1.3。外部 review agent 真实 list 跑通
+  - 顺手修的 bug:`readExistingIds` 只扫标题行 ID — 原实现把 block 里 quote 行的 ID 也计入,若该 tweet 日后真作为顶层出现会被误判重复
+  - 文档对齐:DESIGN §5 raw 格式骨架补 `(Name)` + `MM-DD`,对齐 normalize 实际产出
   - 验证:格式对齐、ID 唯一、时间倒序 — 全通过
 
 - [x] **S1.5 profile 入口打磨(代码工作量退化说明)**
@@ -57,15 +57,15 @@
 
 ---
 
-## Step 2 — Skill 骨架 + ai-radar topic 迁移(中颗粒)
+## Step 2 — Skill 骨架 + `ai-radar` topic 配置(中颗粒)
 
-**目标**:`/perch collect --topic ai-radar` 能端到端跑通,raw 落到 ai-radar topic 库。
+**目标**:`/perch collect --topic ai-radar` 能端到端跑通,raw 落到 topic 数据目录。
 
 - [ ] **S2.1 设计 `SCHEMA.md` 模板** — 定义 Topic 配置规范(source 列表、清洗规则占位、报告模板路径、摘要 prompt 占位)
 - [ ] **S2.2 写 ai-radar topic 的 `SCHEMA.md`** — 落到 `templates/topics/ai-radar/SCHEMA.md`,source 指向现有 list/handle
 - [ ] **S2.3 `lib/topic.mjs`** — 加载 Topic 配置、解析 source、定位数据目录
 - [ ] **S2.4 `/perch collect` 入口** — 读 Topic → 调 x-fetcher → normalize → 追加到 `raw/daily/YYYY-MM-DD.md`(去重 + 时间倒序)
-- [ ] **S2.5 ★ Review gate #3:端到端跑通 ai-radar collect** — raw 文件结构、内容与 ai-radar 老项目产出一致
+- [ ] **S2.5 ★ Review gate #3:端到端跑通 `ai-radar` collect** — raw 文件按 DESIGN §5 格式写入,多次跑累积不漏不重
 
 > 跑到 Step 2 收尾时,再回来把 Step 3-5 展开成子任务。
 
@@ -73,7 +73,7 @@
 
 ## Step 3 — Daily Wiki 生成(morning/noon/evening)
 
-迁移 ai-radar 三份时段 prompt、实现 `summaries.md` 读写、`wiki/daily/` 产出、`/perch report` 入口。**prompt 对齐新 raw 结构的工作量不小,预留打磨时间**。
+将 `templates/topics/ai-radar/` 下三份时段 prompt 适配到新 raw 结构、实现 `summaries.md` 读写、`wiki/daily/` 产出、`/perch report` 入口。**prompt 对齐新 raw 结构的工作量不小,预留打磨时间**。
 
 ## Step 4 — 月度 rotate 脚本
 

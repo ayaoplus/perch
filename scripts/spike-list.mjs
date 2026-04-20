@@ -8,8 +8,8 @@
 // 用法:
 //   node scripts/spike-list.mjs <list-url> [limit]
 //
-// 示例(用 ai-radar 现有 AI list):
-//   node scripts/spike-list.mjs https://x.com/i/lists/REPLACE_WITH_YOUR_LIST_ID 5
+// 示例:
+//   node scripts/spike-list.mjs https://x.com/i/lists/<id> 5
 //
 // 前置条件:
 //   - 用户日常 Chrome 已开远程调试端口(默认自动发现 9222/9229/9333)

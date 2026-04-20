@@ -16,7 +16,7 @@ description:
 
 ## 当前状态:v1 骨架阶段
 
-- **已完成**:项目骨架 + ai-radar 作为首个 Topic 迁入 + 3 个报告模板保留
+- **已完成**:项目骨架 + Step 1(vendor CDP + X fetcher) + `ai-radar` topic 的配置和模板
 - **下一步**:路线图 Step 1 — Vendor CDP 瘦核(源:`~/development/anyreach/`)
 
 ## 核心概念(3 个)
@@ -46,7 +46,7 @@ description:
 |---|---|
 | `~/development/anyreach/` | CDP 核心 + X adapter 源头,vendor 用 |
 | `~/development/ikiw/` | 思想同源的知识库框架,prompt 可 copy |
-| `~/development/ai-radar/` | 前身项目,本项目继承其 templates 和 collect.mjs 的稳定函数 |
+| `~/development/ai-radar/` | 前身项目,保留但冻结 |
 
 ## 命令(规划中,v1 逐步实现)
 
