@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-多 Topic 个人信息漏斗 · 基于 ikiw 思想的互联网数据处理框架。**完整设计见 `docs/DESIGN.md`,任何实现前必读。开发任务清单见 `docs/TASKS.md`。**
+多 Topic 个人信息漏斗 · 互联网数据处理框架。**完整设计见 `docs/DESIGN.md`,任何实现前必读;快速入门见 `README.md`。**
 
 ## 提交规则(原子提交)
 
@@ -13,16 +13,6 @@
   - 破坏性操作(删历史、强制推送、schema 删字段)
   - 多个不相关改动需要拆分成多个 commit
 
-## 代码复用约定
-
-所有上游资产在本地 `~/development/` 下,需要参考 / vendor 代码时**直接读本地文件**,不要网上搜。
-
-| 目录 | 用途 |
-|---|---|
-| `~/development/anyreach/` | CDP Proxy + X adapter 源头。**lib/ 下的代码 vendor 自这里** |
-| `~/development/ikiw/` | 思想同源的知识库框架。prompt / frontmatter 规范可 copy |
-| `~/development/ai-radar/` | 前身项目,保留但冻结。不作为运行时依赖;templates 和数据目录在 perch 里作为 `ai-radar` topic 继续存在 |
-
 ## 编码习惯
 
 - 编辑代码前**先读文件**,理解现有逻辑再动手
@@ -32,14 +22,18 @@
 - 函数名 / 变量名要一眼看明白用途,变量作用域越小越好
 - 同样的逻辑出现 3 次才抽象
 
-## 与 ai-radar(老项目)的边界
+## 架构原则
 
-- 老目录 `~/development/ai-radar/` **保留但冻结**,不再在老目录开发
-- 所有新开发在 `~/development/perch/`
-- 老目录里的资产(collect.mjs / templates)作为"代码参考源",不作为运行时依赖
+按 DESIGN §2.1 的 **Fetch / Business / Tool** 三层分工改代码:
 
-## 路线图
+- **Fetch**(`lib/x-fetcher.mjs`)返回 DOM 顺序的原始 tweet。不排序、不做时间窗、不识别 pinned。内部 2-pass 稳定性只吸收 lazy-DOM 抖动,不是业务语义
+- **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs`)编排业务语义:跨源合并、ID 去重、时间排序、按 topic 写盘
+- **Tool**(`lib/normalize.mjs` / `topic.mjs` / `wiki.mjs` / `rotate.mjs`)提供可组合原子
 
-见 `docs/DESIGN.md` 第 8 节。**Step 1(vendor CDP + X fetcher)已全部收尾**(S1.4 / S1.6 两个 review gate 均通过)。当前推进 **Step 2 — topic 配置 + `/perch collect`**,细粒度任务见 `docs/TASKS.md`。
+不要把业务语义倒回 Fetch 层。
 
-路线图 v1 结束前,**不做**:Topic Wiki 的 stale/rebuild 机制、跨 topic 查询、Processor 插件化、SQLite 索引层。
+## 状态
+
+v1 主链路已实现:collect / report / rotate 三条管线闭环。详见 `docs/DESIGN.md` §7。
+
+v1 明确不做:Topic Wiki stale/rebuild、跨 topic 查询、Processor 插件化、SQLite 索引、`report` 的 cron 化、summaries 月度切分归档。

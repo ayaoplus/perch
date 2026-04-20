@@ -2,30 +2,28 @@
 name: perch
 description:
   多 Topic 个人信息漏斗。从 X(List 或用户时间线)采集数据,按 Topic 生成 Daily/Topic Wiki 和各类衍生产出。
-  触发场景:X 数据采集、每日/时段报告生成、跨 Topic 查询、管理多主题信息漏斗(AI / Web3 / ...)。
-  v1 开发中。命令规划与完整设计见 docs/DESIGN.md,开发任务见 docs/TASKS.md。
+  触发场景:X 数据采集、每日/时段报告生成、管理多主题信息漏斗(AI / Web3 / ...)。
+  v1 主链路已实现。完整设计见 docs/DESIGN.md,快速入门见 README.md。
 ---
 
 # Perch
 
-> 基于 ikiw 思想的互联网数据处理框架。每个 Topic = 一组数据源 + 一套 LLM 工作流。
+> 互联网数据处理框架。每个 Topic = 一组数据源 + 一套 LLM 工作流。
 
 ## ⚠️ 必读:设计规范
 
-**完整架构、风险、路线图、术语全部在 `docs/DESIGN.md`。任何实现前请先读。开发任务拆解见 `docs/TASKS.md`。**
+**完整架构、风险、v1 状态、术语全部在 `docs/DESIGN.md`。任何实现前请先读。**
 
-## 当前状态:v1 实现中
+## 当前状态
 
-- **已完成代码**:Step 1(vendor CDP + X fetcher) + Step 2(`ai-radar` topic + collect) + Step 3(report 脚手架) + Step 4(rotate 脚本)
-- **待 live review gate**:S2.5(collect 端到端)、S3(wiki 产出质量)、S4(rotate 手跑归档)
-- **下一步**:review gate 过后按需展开 Step 5(加第二个 topic 验证配置化)
+v1 主链路已实现:collect / report / rotate。命令见下。
 
 ## 核心概念(3 个)
 
 | 概念 | 含义 |
 |---|---|
-| **Topic** | 配置包 = source + 清洗规则 + 报告模板 + 摘要 prompt。每个 Topic 一个独立数据库目录 |
-| **Daily Wiki** | 时段自动产出(morning/noon/evening),一次性,用完归档 |
+| **Topic** | 配置包 = source + 清洗规则 + 报告模板 + 摘要 prompt。每个 Topic 一个独立数据目录 |
+| **Daily Wiki** | 时段产出(morning/noon/evening),一次性,用完归档 |
 | **Topic Wiki** | 跨日期累积,按需产出,带 frontmatter 可 stale → rebuild |
 
 ## 架构一图流
@@ -41,13 +39,7 @@ description:
 
 中间固定(raw 格式、summaries、frontmatter、rotate),两头可扩展(新 source / 新 processor 平行加)。
 
-## 相关本地资产
-
-| 路径 | 用途 |
-|---|---|
-| `~/development/anyreach/` | CDP 核心 + X adapter 源头,vendor 用 |
-| `~/development/ikiw/` | 思想同源的知识库框架,prompt 可 copy |
-| `~/development/ai-radar/` | 前身项目,保留但冻结 |
+代码内部按 **Fetch / Business / Tool** 三层分工,业务语义只落在 Business 层。详见 DESIGN §2.1。
 
 ## 命令
 
@@ -59,7 +51,7 @@ description:
 | `/perch report [morning\|noon\|evening\|now] [--topic <slug>]` | `scripts/report.mjs` | **Skill 模式**(见下) |
 | `/perch rotate [--dry-run] [--topic <slug>]` | `scripts/rotate.mjs` | 纯自动化:搬非当月 `raw/daily/*` 和 `wiki/daily/*` 到 `archive/YYYY-MM/` |
 
-### v1 明确不实现(DESIGN §8)
+### v1 明确不实现(DESIGN §7)
 
 - `/perch wiki "主题"` — Topic Wiki stale / rebuild 机制
 - `/perch query "..."` — 跨 topic 查询
