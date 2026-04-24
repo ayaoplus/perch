@@ -5,3 +5,9 @@ node_modules/
 .env.local
 /tmp/
 .claude/
+.agents/
+.kiro/
+.trae/
+config.json
+skills-lock.json
+templates/topics/crypto-radar/

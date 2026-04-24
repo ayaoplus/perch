@@ -298,7 +298,7 @@ cron 失败、重入错乱、归档漏文件 = 丢数据。
 | 7 | 新 topic 脚手架(交互向导 + `--from-json`) | ✅ 完成(`scripts/new-topic.mjs`) |
 | 8 | `report now` wrap 时 date/raw/wiki/window 一致性 + 显式 slot canonical end | ✅ 完成(消除反向时间窗 / 错位 raw) |
 | 9 | collect 全局时间重排(非前插) | ✅ 完成(`splitRawBlocks` + `mergeBlocksByTimeDesc`) |
-| 10 | 加第二个 topic 验证配置化 | ✅ 完成(`crypto-radar`:4 个 list × 3 时段) |
+| 10 | 加第二个 topic 验证配置化 | ✅ 完成(本地双 topic 跑通,仓库只保留 `ai-radar` 示例) |
 
 ### v1 明确不做
 

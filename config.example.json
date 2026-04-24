@@ -6,11 +6,6 @@
       "path": "/absolute/path/to/your-data-dir/ai-radar",
       "description": "AI 博主每日选题漏斗",
       "templates_dir": "templates/topics/ai-radar"
-    },
-    "crypto-radar": {
-      "path": "/absolute/path/to/your-data-dir/crypto-radar",
-      "description": "币圈交易",
-      "templates_dir": "templates/topics/crypto-radar"
     }
   },
   "rotate": {

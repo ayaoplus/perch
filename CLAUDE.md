@@ -44,6 +44,6 @@
 
 ## 状态
 
-v1 全链路已实现:collect / report / rotate / fetch-article / new-topic 五条管线闭环。两个 topic 在跑:ai-radar + crypto-radar。详见 `docs/DESIGN.md` §7。
+v1 全链路已实现:collect / report / rotate / fetch-article / new-topic 五条管线闭环。仓库内置一个示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §7。
 
 v1 明确不做:Topic Wiki stale/rebuild、跨 topic 查询、Processor 插件化、SQLite 索引、`report` 的 cron 化、summaries 月度切分归档、跨昨日 raw 的 since_prev 首 slot、per-topic timezone、外链深抓。
