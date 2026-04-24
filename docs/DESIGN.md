@@ -47,8 +47,8 @@
 | 层 | 位置 | 做什么 | **不**做什么 |
 |---|---|---|---|
 | **Fetch** | `lib/x-fetcher.mjs` · `lib/x-adapter.mjs` | 打开 X 页面后从其内部 redux store 直接读 timeline(`state.urt.<timelineKey>` + `state.entities.tweets/users`),原样输出每条 tweet(含长推全文 + `socialContext` repost 信息) | 不排序、不做时间窗过滤、不识别 pinned、不爬 DOM |
-| **Business** | `scripts/collect.mjs` · `scripts/report.mjs` · `scripts/rotate.mjs` · `scripts/fetch-article.mjs` · `scripts/new-topic.mjs` | 编排业务流:generous limit + 跨次去重 + **existing+new block 全局时间重排**(非前插) · slot 映射 + 日期回退 + 窗口计算 · 月度归档 · 按需 article 深抓 · topic 脚手架 | 不直接碰 CDP / 页面 DOM |
-| **Tool** | `lib/normalize.mjs` · `lib/topic.mjs` · `lib/wiki.mjs` · `lib/rotate.mjs` · `lib/article-cache.mjs` | 可组合原子:`formatTweet` / `dedupTweets`(聚合 `__via` + `repostedBy`)/ `sortTweetsByTime` / `readExistingIds` / `splitRawBlocks` + `mergeBlocksByTimeDesc`(raw 全局重排)/ `loadTopic` + `DEFAULT_SLOTS` / 路径辅助 / article 缓存读写 | 不做业务流编排 |
+| **Business** | `scripts/collect.mjs` · `scripts/report.mjs` · `scripts/rotate.mjs` · `scripts/fetch-article.mjs` · `scripts/new-topic.mjs` · `scripts/wiki-write.mjs` | 编排业务流:generous limit + 跨次去重 + **existing+new block 全局时间重排**(非前插) · slot 映射 + 日期回退 + 窗口计算 · 月度归档 · 按需 article 深抓 · topic 脚手架 · wiki section 级幂等 upsert | 不直接碰 CDP / 页面 DOM |
+| **Tool** | `lib/normalize.mjs` · `lib/topic.mjs` · `lib/wiki.mjs` · `lib/rotate.mjs` · `lib/article-cache.mjs` | 可组合原子:`formatTweet` / `dedupTweets`(聚合 `__via` + `repostedBy`)/ `sortTweetsByTime` / `readExistingIds` / `splitRawBlocks` + `mergeBlocksByTimeDesc`(raw 全局重排)/ `loadTopic` + `DEFAULT_SLOTS` / 路径辅助 / `upsertWikiSlotSection`(wiki 当日文件的 `## slot: <name>` 段幂等 upsert)/ article 缓存读写 | 不做业务流编排 |
 
 **为什么这么分**:实证例子是 profile 页面的 pinned tweet。`fetchXProfile(.., {limit:5})` 顶部可能是钉着的老推文,"顺序错"只是表象,**本质是 pinned 挤占一个位置导致最老应收推文漏采**。如果修法是"在 Fetch 层默认按时间排 + 过滤 pinned",就把业务语义污染到底层 API,将来"想保留 pinned"或"想要原序"的场景就得反向 opt-out。反过来保持 Fetch 干净,业务层按场景自行组合,扩展性和可测试性都更好。
 
@@ -152,7 +152,8 @@ Daily wiki 的写入不走 Claude 直接 Write,而是 Claude 生成自己那段 
 ├── README.md                   # 面向人的快速入门
 ├── CLAUDE.md                   # 项目协作规则
 ├── AGENTS.md                   # 自动化 agent 速览
-├── config.json                 # 全局配置(默认 topic、归档策略、timezone)
+├── config.example.json         # 提交到 git 的占位模板;clone 后 cp 成 config.json 再改路径
+├── config.json                 # 本地运行时配置(gitignore):默认 topic、归档策略、timezone、各 topic 的 path / templates_dir
 ├── lib/                        # Fetch + Tool 层
 │   ├── browser-provider.mjs    # Chrome + CDP Proxy 生命周期(user / managed 双模式)
 │   ├── cdp-proxy.mjs           # HTTP-over-CDP bridge,独立子进程
@@ -162,7 +163,7 @@ Daily wiki 的写入不走 Claude 直接 Write,而是 Claude 生成自己那段 
 │   ├── x-fetcher.mjs           # CDP 栈生命周期 + adapter 调用,对外暴露 fetchXList / fetchXProfile
 │   ├── normalize.mjs           # tweet 对象 → raw markdown block + 去重 / 排序 / 聚合
 │   ├── topic.mjs               # Topic 配置加载(读 config.json + SCHEMA.md frontmatter)
-│   ├── wiki.mjs                # Wiki / summaries 路径与写入辅助(含幂等 upsert)
+│   ├── wiki.mjs                # Wiki / summaries 路径与写入辅助(summaries 日条目 + wiki 当日文件的 slot section 幂等 upsert)
 │   ├── article-cache.mjs       # Twitter Article 按月缓存的路径 + 读写原子
 │   └── rotate.mjs              # 月度归档工具(含 article cache)
 ├── scripts/                    # Business 层入口 + review gate spike
@@ -171,6 +172,7 @@ Daily wiki 的写入不走 Claude 直接 Write,而是 Claude 生成自己那段 
 │   ├── rotate.mjs              # /perch rotate 入口
 │   ├── fetch-article.mjs       # 按需深抓 Twitter Article(Claude 会话里 Bash 调用)
 │   ├── new-topic.mjs           # 新 topic 脚手架(交互向导 + --from-json)
+│   ├── wiki-write.mjs          # Wiki section 级幂等 upsert(Claude 生成 slot 内容后 Bash heredoc pipe 调用)
 │   ├── spike-list.mjs          # list 抓取 review gate
 │   └── spike-profile.mjs       # profile 抓取 review gate
 ├── sources/                    # 采集插件(可扩展端之一,v1 占位)
@@ -301,6 +303,7 @@ cron 失败、重入错乱、归档漏文件 = 丢数据。
 | 8 | `report now` wrap 时 date/raw/wiki/window 一致性 + 显式 slot canonical end | ✅ 完成(消除反向时间窗 / 错位 raw) |
 | 9 | collect 全局时间重排(非前插) | ✅ 完成(`splitRawBlocks` + `mergeBlocksByTimeDesc`) |
 | 10 | 加第二个 topic 验证配置化 | ✅ 完成(本地双 topic 跑通,仓库只保留 `ai-radar` 示例) |
+| 11 | Wiki 当日合文件 + slot section 级幂等 upsert | ✅ 完成(`scripts/wiki-write.mjs` + `lib/wiki.mjs::upsertWikiSlotSection`;Claude 生成 slot markdown → heredoc pipe,职责分离) |
 
 ### v1 明确不做
 
@@ -332,7 +335,7 @@ cron 失败、重入错乱、归档漏文件 = 丢数据。
 | **Topic**      | 一个配置包(source + 清洗 + 模板 + 摘要 prompt),对应一个独立数据目录                   |
 | **Source**     | Topic 的数据输入端,插件化。当前支持 `x-list` / `x-user`                        |
 | **Processor**  | Topic 的数据产出端,插件化。当前支持 `report`(后续扩展 `distill` / `visual-card` 等) |
-| **Daily Wiki** | 时段触发的一次性报告,日期+slot 绑定                                            |
+| **Daily Wiki** | 归属日 1 份文件(`YYYY-MM-DD.md`),所有 slot 以 `## slot: <name>` 分段,按 start_hour 升序;slot 粒度幂等 upsert |
 | **Topic Wiki** | 按需生成的跨日期主题报告,带 frontmatter 可 rebuild                             |
 | **Raw**        | 归一化后的原始推文 markdown 文件,一天一个                                       |
 | **Summaries**  | 当月推文的日概览索引,LLM 一次读完用于定位相关推文                                      |

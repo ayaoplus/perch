@@ -347,7 +347,7 @@ node scripts/collect.mjs --topic <slug> --dry
 node scripts/collect.mjs --topic <slug>
 node scripts/collect.mjs --topic <slug> --limit 20    # 可选:临时覆盖所有 source 的 fetch_limit
 
-# 6. 生成某个 slot 的报告(Claude 会话里跑)
+# 6. 生成某个 slot 的报告(Claude 会话里跑;脚本打印 prompt,Claude 接棒生成 + 用 {WIKI_WRITE_CMD} 做 section upsert)
 node scripts/report.mjs now --topic <slug>            # 自动选 slot + 凌晨 wrap 到昨天末 slot
 node scripts/report.mjs morning --topic <slug>        # 显式指定(end 用 canonical,不受当前时刻影响)
 
@@ -358,7 +358,7 @@ node scripts/rotate.mjs --topic <slug>
 
 **agent 跑自动化建议**:
 - `collect`:定时 3~4 次/天,CLI 幂等(statusId 去重 + 全局重排都能吸收重复调用)
-- `report`:优先用 `now`,时区 / slot / 归属日期 / window 全部自动解析;凌晨触发会自动 wrap 到昨天末 slot,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 一起指向昨天
+- `report`:优先用 `now`,时区 / slot / 归属日期 / window 全部自动解析;凌晨触发会自动 wrap 到昨天末 slot,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 一起指向昨天。Claude 接棒后**必须用 `{WIKI_WRITE_CMD}` heredoc pipe 把生成的 slot markdown 喂给 `wiki-write.mjs`**,不要用 Write 工具直接覆盖 `{WIKI_PATH}`(否则抹掉其他 slot 的 section)
 - `rotate`:每月 1 号跑一次,前置 `--dry-run` 看 plan
 
 ---

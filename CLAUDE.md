@@ -27,7 +27,7 @@
 按 DESIGN §2.1 的 **Fetch / Business / Tool** 三层分工改代码:
 
 - **Fetch**(`lib/x-fetcher.mjs` / `x-adapter.mjs`)打开 X 页面后从 redux store 直接读 timeline(长推全文 + repost + metrics 自带),原样输出每条 tweet。不排序、不做时间窗、不识别 pinned
-- **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs` / `fetch-article.mjs` / `new-topic.mjs`)编排业务语义:跨源合并、ID 去重 + 聚合、**全局时间重排**(不是前插)、slot 映射 + 日期回退、窗口计算、按 topic 写盘
+- **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs` / `fetch-article.mjs` / `new-topic.mjs` / `wiki-write.mjs`)编排业务语义:跨源合并、ID 去重 + 聚合、**全局时间重排**(不是前插)、slot 映射 + 日期回退、窗口计算、按 topic 写盘、wiki 单文件 section 级幂等 upsert
 - **Tool**(`lib/normalize.mjs` / `topic.mjs` / `wiki.mjs` / `rotate.mjs` / `article-cache.mjs`)提供可组合原子
 
 不要把业务语义倒回 Fetch 层。
@@ -41,9 +41,10 @@
 - **wrap 统一规则**:触发时 hour < 对应 slot 的 `start_hour` → `date` 回退到昨天(`now` 凌晨 / 显式 slot 在该 slot 今天起点前触发都走这条)。`date`、raw、wiki 一起回退
 - **endLabel**:归属日=昨天 → canonical end;归属日=今天 → `min(now, canonical)`。这同时杜绝反向窗口和未来窗口
 - prompt 模板**不要硬编码小时数**,用 `{WINDOW_*}` 占位符,让 SCHEMA.slots.window 成为单一 source of truth
+- **wiki 写入**:当日 wiki 是 1 份共享文件(`YYYY-MM-DD.md`),slot 粒度走 `## slot: <name>` section 幂等 upsert。Claude 必须用 `{WIKI_WRITE_CMD}` heredoc pipe 写,**不要**用 Write 工具直接覆盖 `{WIKI_PATH}`(会抹掉其他 slot 的 section)
 
 ## 状态
 
-v1 全链路已实现:collect / report / rotate / fetch-article / new-topic 五条管线闭环。仓库内置一个示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §7。
+v1 全链路已实现:collect / report / rotate / fetch-article / new-topic / wiki-write 六条管线闭环。仓库内置一个示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §7。
 
 v1 明确不做:Topic Wiki stale/rebuild、跨 topic 查询、Processor 插件化、SQLite 索引、`report` 的 cron 化、summaries 月度切分归档、跨昨日 raw 的 since_prev 首 slot、per-topic timezone、外链深抓。

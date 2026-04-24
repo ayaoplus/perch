@@ -16,14 +16,14 @@ description:
 
 ## 当前状态
 
-v1 主链路已实现:collect / report / rotate。命令见下。
+v1 主链路已实现:collect / report / rotate / fetch-article / new-topic / wiki-write。命令见下。
 
 ## 核心概念(3 个)
 
 | 概念 | 含义 |
 |---|---|
 | **Topic** | 配置包 = source + 清洗规则 + 报告模板 + 摘要 prompt。每个 Topic 一个独立数据目录 |
-| **Daily Wiki** | 时段产出(morning/noon/evening),一次性,用完归档 |
+| **Daily Wiki** | 归属日 1 份文件(`YYYY-MM-DD.md`),按 topic 配置的 slot(morning/noon/evening/...)分段为 `## slot: <name>`,每个 slot 重跑幂等替换自己那段;月末归档 |
 | **Topic Wiki** | 跨日期累积,按需产出,带 frontmatter 可 stale → rebuild |
 
 ## 架构一图流
@@ -48,8 +48,11 @@ v1 主链路已实现:collect / report / rotate。命令见下。
 | 命令 | 底层脚本 | 工作模式 |
 |---|---|---|
 | `/perch collect [--topic <slug>] [--dry]` | `scripts/collect.mjs` | 纯自动化:抓 X → dedup + readExistingIds → sort → 写 raw |
-| `/perch report [morning\|noon\|evening\|now] [--topic <slug>]` | `scripts/report.mjs` | **Skill 模式**(见下) |
+| `/perch report [<slot>\|now] [--topic <slug>]` | `scripts/report.mjs` | **Skill 模式**(见下) |
 | `/perch rotate [--dry-run] [--topic <slug>]` | `scripts/rotate.mjs` | 纯自动化:搬非当月 `raw/daily/*` 和 `wiki/daily/*` 到 `archive/YYYY-MM/` |
+| `node scripts/fetch-article.mjs <status_url> [--topic <slug>]` | `scripts/fetch-article.mjs` | report 阶段 Claude 按需 Bash 调用:CDP 抓 Twitter Article → 缓存 `cache/articles/YYYY-MM/` |
+| `node scripts/new-topic.mjs [--from-json <spec>]` | `scripts/new-topic.mjs` | 纯自动化:交互 / 非交互创建 topic(SCHEMA + prompt + config 注册) |
+| `{WIKI_WRITE_CMD} << 'PERCH_EOF' ... PERCH_EOF` | `scripts/wiki-write.mjs` | report 阶段 Claude 管道调用:按 slot 对当日 wiki 做 section 级幂等 upsert |
 
 ### v1 明确不实现(DESIGN §7)
 
@@ -60,11 +63,11 @@ v1 主链路已实现:collect / report / rotate。命令见下。
 
 `collect` 和 `rotate` 是**确定性任务**(纯 IO,不需要智能):脚本自己跑完即可,将来 cron 化无障碍。
 
-`report` 需要 LLM 智能(morning / noon / evening 的 Q1–Q17 判断都是内容分析),v1 走 **Skill 模式**:
+`report` 需要 LLM 智能(slot 内的 Q1–Qn 判断都是内容分析),v1 走 **Skill 模式**:
 
 1. `scripts/report.mjs` 读 topic 配置 + 对应时段的 prompt 模板
-2. 把模板里的 `{RAW_PATH}` / `{WIKI_PATH}` / `{SUMMARIES_PATH}` / `{SOURCES}` / `{DATE}` 等占位符填实
+2. 把模板里的 `{RAW_PATH}` / `{WIKI_PATH}` / `{WIKI_WRITE_CMD}` / `{SUMMARIES_PATH}` / `{SOURCES}` / `{DATE}` / `{WINDOW_*}` 等占位符填实
 3. 完整 prompt 打到 stdout
-4. **当前 Claude 会话读到 stdout 后接棒**:读 raw → 按 prompt 生成 wiki 内容 → 写入 `{WIKI_PATH}`(evening 时额外追加一条到 `{SUMMARIES_PATH}`)
+4. **当前 Claude 会话读到 stdout 后接棒**:读 raw → 按 prompt 生成 slot markdown → **用 `{WIKI_WRITE_CMD}` heredoc pipe 给 `wiki-write.mjs` 做 section 级 upsert**(evening 时额外把一条概览 append 到 `{SUMMARIES_PATH}`)
 
-所以 `/perch report` 不直接产出 wiki,是"让 Claude 产出 wiki"。cron 自动化(无会话依赖、直接调 Anthropic API)留 v2。
+所以 `/perch report` 不直接产出 wiki,是"让 Claude 产出 wiki"。wiki-write.mjs 负责持久化(按 slot 幂等替换 + 其他 slot section 原样保留),Claude 只管生成内容。cron 自动化(无会话依赖、直接调 Anthropic API)留 v2。
