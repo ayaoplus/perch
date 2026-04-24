@@ -127,7 +127,7 @@ const written = await scaffoldTopic(rootDir, spec);
 | `type` | `"list"` \| `"profile"` | ✅ | list = X List;profile = 用户时间线 |
 | `target` | string | ✅ | list 时:`https://x.com/i/lists/NNN`。profile 时:handle(`elonmusk` / `@elonmusk`)或完整 URL(也支持 `elonmusk/media`、`elonmusk/articles`、`elonmusk/with_replies`) |
 | `label` | string | | 人读备注 |
-| `fetch_limit` | int 1-200 | | 每次抓取上限,默认 80。设计上是 **generous**:给 pinned / DOM 抖动 / 当日高频账号留余量,下游 ID 去重兜底。不是精确卡口 |
+| `fetch_limit` | int 1-200 | | 每次抓取上限,默认 80。设计上是 **generous**:给 pinned / 当日高频账号留余量,下游 ID 去重兜底。不是精确卡口 |
 
 #### `slots[]`
 
@@ -362,8 +362,7 @@ node scripts/rotate.mjs --topic <slug>
 ## 8. 常见坑 / 设计边界
 
 - **同一 source 想拆出独立产出**:升级为**新 topic**,不要在 raw 层分目录(DESIGN §5 的硬约束)
-- **长推 hydrate 失败**:失败会保留截断版 + `isTruncated=true` 标记,不 fatal。通常是登录态丢失或 X 限流导致的瞬时问题,下一次 collect 通常能补上
-- **Quote tweet 的原推也是长推**:quote 的正文在 X timeline 里也被 UI 截断。v1 只去掉人为的 140 字截断,**不再对 quote 做独立 hydrate**。如果这个场景变成高频痛点,v2 再加
+- **长推 / quote 正文完整性**:Fetch 层从 X redux store 直接读,`note_tweet` 已经被 X 合并进 `full_text`,长推 + quote 的全文都是现成的,不需要"二次 hydrate"这一步。Quote 也从 store 里 `entities.tweets[<quoted_id>]` 直接拿 text,无截断
 - **时段模板缺失**:`report.mjs` 直接报错退出。新增 slot 记得同步建 prompt 模板
 - **slot 名字叫 `now`**:会在 loadTopic 阶段被拒(`now` 是保留字,给 `report.mjs now` 的自动映射用)
 - **时区不是 topic 级**:v1 全局只有一个 `timezone`。跨时区多 topic 要到 v2

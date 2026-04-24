@@ -26,7 +26,7 @@
 
 按 DESIGN §2.1 的 **Fetch / Business / Tool** 三层分工改代码:
 
-- **Fetch**(`lib/x-fetcher.mjs` / `x-adapter.mjs`)返回 DOM 顺序的原始 tweet + 数据完整性兜底(2-pass 稳定性 / 长推 hydrate / socialContext 识别)。不排序、不做时间窗、不识别 pinned
+- **Fetch**(`lib/x-fetcher.mjs` / `x-adapter.mjs`)打开 X 页面后从 redux store 直接读 timeline(长推全文 + repost + metrics 自带),原样输出每条 tweet。不排序、不做时间窗、不识别 pinned
 - **Business**(`scripts/collect.mjs` / `report.mjs` / `rotate.mjs` / `fetch-article.mjs` / `new-topic.mjs`)编排业务语义:跨源合并、ID 去重 + 聚合、**全局时间重排**(不是前插)、slot 映射 + 日期回退、窗口计算、按 topic 写盘
 - **Tool**(`lib/normalize.mjs` / `topic.mjs` / `wiki.mjs` / `rotate.mjs` / `article-cache.mjs`)提供可组合原子
 

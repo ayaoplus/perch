@@ -12,7 +12,7 @@
 
 | 能力 | 入口 | 说明 |
 |---|---|---|
-| **采集** | `scripts/collect.mjs` | 真实登录态 Chrome + CDP 驱动的 X 抓取 → 长推 hydrate → 跨源去重 + repost 聚合 → 按时间倒序写入当日 raw |
+| **采集** | `scripts/collect.mjs` | 真实登录态 Chrome + CDP 读 X redux store → 跨源去重 + repost 聚合 → 按时间倒序写入当日 raw |
 | **报告** | `scripts/report.mjs` | 时段 prompt 模板化(slot 数量/边界/覆盖窗口 topic 级自定义),由 Claude 会话接棒生成 Daily Wiki |
 | **按需深抓** | `scripts/fetch-article.mjs` | Claude 在 report 阶段需要 Twitter Article 全文时 Bash 调用,CDP 抓取 + 按月缓存 |
 | **归档** | `scripts/rotate.mjs` | 每月把非当月的 raw / wiki / article cache 搬到 `archive/YYYY-MM/`,幂等,支持 `--dry-run` |
@@ -26,7 +26,7 @@
 
 ```
 Fetch  (lib/x-fetcher.mjs · lib/x-adapter.mjs)
-    ↓  DOM 提取 · 2-pass 稳定性 · 长推自动 hydrate · socialContext 识别
+    ↓  读 X redux store(长推全文 / repost / metrics 自带,无 DOM 爬虫)
 Business (scripts/collect.mjs · report.mjs · rotate.mjs · fetch-article.mjs · new-topic.mjs)
     ↓  编排:跨源合并 · ID 去重 + repost 聚合 · 时间排序 · 窗口计算 · 按需深抓 · Topic 脚手架
 Tool  (lib/normalize.mjs · topic.mjs · wiki.mjs · article-cache.mjs · rotate.mjs)
@@ -95,9 +95,9 @@ node scripts/new-topic.mjs --help
 
 v1 已实现 collect / report / rotate / fetch-article / new-topic 五条主链路:
 
-- 长推自动 hydrate + socialContext 识别 + dedup 聚合(纯 RT 合并、quote 完整保留)
+- Fetch 层读 X redux store(长推全文、repost 链、metrics 自带)+ dedup 聚合(纯 RT 合并、quote 完整保留)
 - Slot 数量 / 边界 / 覆盖窗口全部 topic 级可配(`SCHEMA.slots`);`report now` 自带日期回退 + wrap;显式 slot 用 canonical end
-- Raw 每次写盘**全局时间重排**(非前插),吸收 pinned / DOM 抖动 / source 晚到的旧推
+- Raw 每次写盘**全局时间重排**(非前插),吸收 pinned / source 晚到的旧推
 - Twitter Article 按需深抓 + 按月缓存 + 随 rotate 归档
 - 新 topic 脚手架(交互 / `--from-json`,都有 spec 校验;`slots` 可省略自动 fallback `DEFAULT_SLOTS`)
 - 两个验证过的 topic:`ai-radar`(AI 博主选题漏斗)+ `crypto-radar`(币圈交易)
