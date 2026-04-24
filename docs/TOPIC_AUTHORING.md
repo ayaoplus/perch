@@ -181,7 +181,8 @@ const written = await scaffoldTopic(rootDir, spec);
 | `{DATE}` | `YYYY-MM-DD`(**归属日**,不是"今天"—— wrap 场景指向昨天,详见下节) |
 | `{SLOT}` | 当前 slot name |
 | `{RAW_PATH}` | 归属日 raw 文件绝对路径 |
-| `{WIKI_PATH}` | 本次 wiki 产出绝对路径(归属日 + slot) |
+| `{WIKI_PATH}` | 归属日 wiki 文件绝对路径(**当日所有 slot 共用一份**,按 `## slot: <name>` 分段) |
+| `{WIKI_WRITE_CMD}` | `node /abs/path/to/scripts/wiki-write.mjs --topic <slug> --date <date> --slot <slot>`;Claude 用 Bash heredoc pipe 把生成内容喂给它做幂等 upsert |
 | `{SUMMARIES_PATH}` | `summaries.md` 绝对路径 |
 | `{SOURCES}` | 人读 source 描述(`X List "AI KOL" + X Profile "elonmusk"`) |
 | `{WINDOW_TYPE}` | `today` \| `since_prev` |
@@ -190,7 +191,10 @@ const written = await scaffoldTopic(rootDir, spec);
 | `{ARTICLE_CACHE_DIR}` | 当月 article 缓存目录绝对路径 |
 | `{FETCH_ARTICLE_CMD}` | `node /abs/path/to/scripts/fetch-article.mjs --topic <slug>`(Claude 直接拼 `<status_url>` 用) |
 
-**prompt 作者约定**:模板里**不要硬编码**"过去 12h""完整 24h"这种小时数,而是引用 `{WINDOW_TYPE}` / `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}`。这样 SCHEMA.slots 的 window 配置变更会自动反映到 prompt 里,不用改两处。ai-radar 的三份 prompt 是参考样例。
+**prompt 作者约定**:
+- 模板里**不要硬编码**"过去 12h""完整 24h"这种小时数,而是引用 `{WINDOW_TYPE}` / `{WINDOW_START_LABEL}` / `{WINDOW_END_LABEL}`。这样 SCHEMA.slots 的 window 配置变更会自动反映到 prompt 里,不用改两处
+- **不要让 Claude 用 Write 直接写 `{WIKI_PATH}`** —— 当日 wiki 是共享文件,直接覆盖会抹掉其他 slot 的 section。必须用 `{WIKI_WRITE_CMD} <<'PERCH_EOF' ... PERCH_EOF` 走脚本 upsert(脚本会自动加 `## slot: <name>` 外层标题 + 按 start_hour 重排 sections)
+- ai-radar 的三份 prompt 是参考样例
 
 ### 3.4 `report` 的 slot 映射 + 日期回退 + endLabel
 
@@ -300,8 +304,8 @@ node scripts/fetch-article.mjs <status_url> [--topic <slug>]
 │   └── daily/YYYY-MM-DD.md     当日原始采集(多 source 合并,时间倒序)
 ├── summaries.md                每日概览(按 `## YYYY-MM-DD` 倒序,evening report 维护)
 ├── wiki/
-│   ├── daily/YYYY-MM-DD-{slot}.md   每个 slot 一份报告
-│   └── topic/<name>.md              按需累积的主题报告(v1 手动触发)
+│   ├── daily/YYYY-MM-DD.md     当日所有 slot 合并(按 `## slot: <name>` 分段,start_hour 升序)
+│   └── topic/<name>.md         按需累积的主题报告(v1 手动触发)
 ├── cache/
 │   └── articles/YYYY-MM/<statusId>.md   按需深抓的 article 正文
 └── archive/
@@ -380,8 +384,9 @@ node scripts/rotate.mjs --topic <slug>
 
 **代码入口(按调用顺序)**:
 - collect: `scripts/collect.mjs` → `lib/x-fetcher.mjs` → `lib/x-adapter.mjs` → `lib/normalize.mjs`(formatTweet / dedupTweets / splitRawBlocks / mergeBlocksByTimeDesc)
-- report: `scripts/report.mjs` → prompt 模板 + 占位符替换 → Claude 会话接棒 → 写 `wiki/daily/...`
+- report: `scripts/report.mjs` → prompt 模板 + 占位符替换 → Claude 会话接棒生成 → 调 `scripts/wiki-write.mjs` 做 `## slot: <name>` 段 upsert → `wiki/daily/YYYY-MM-DD.md`
 - 按需深抓: `scripts/fetch-article.mjs` → `lib/article-cache.mjs`
+- Wiki 写入: `scripts/wiki-write.mjs` → `lib/wiki.mjs::upsertWikiSlotSection`(stdin → 幂等 section 替换 + 原子 rename)
 - 归档: `scripts/rotate.mjs` → `lib/rotate.mjs`
 - Topic 加载: `lib/topic.mjs`(所有脚本的共同入口;`DEFAULT_SLOTS` 也从这里导出)
 - Topic 脚手架: `scripts/new-topic.mjs`(`scaffoldTopic` / `validateTopicSpec` / `renderSchemaMd` / `renderSlotPrompt` 四个可 import 的纯函数)

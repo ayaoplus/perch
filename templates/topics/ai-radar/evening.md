@@ -212,6 +212,16 @@ Signal: 🟢🟢🟢
 
 插入到 `<!-- -->` 注释之后的第一个 `##` 之前(即置顶,时间倒序)。`##` 后的日期用 `{DATE}`(归属日),不要误用"今天"。
 
-## 写入路径
+## 写入方式
 
-`{WIKI_PATH}`
+生成完整 markdown 后(不含 summaries.md 那条,那个走 Write 或 Edit 直接维护),**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+
+```bash
+{WIKI_WRITE_CMD} <<'PERCH_EOF'
+(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## slot: {SLOT}` 外层标题,脚本会自动加)
+PERCH_EOF
+```
+
+最终文件落在 `{WIKI_PATH}`(当日所有 slot 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 slot 的 section。
+
+summaries.md 仍由本 prompt 的"附加任务"段独立维护,不归 wiki-write 脚本管。

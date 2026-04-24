@@ -106,7 +106,19 @@ export function renderSlotPrompt(slug, slot) {
 
 ## 输出格式
 
-把报告按你设计的结构写入 \`{WIKI_PATH}\`。
+按你设计的结构生成完整 markdown(不含 \`## slot: {SLOT}\` 外层标题,脚本会自动加)。
+
+## 写入方式
+
+生成完成后 **用 Bash heredoc 管道给 wiki-write 脚本** 做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+
+\`\`\`bash
+{WIKI_WRITE_CMD} <<'PERCH_EOF'
+(把你生成的完整 markdown 原样放这里)
+PERCH_EOF
+\`\`\`
+
+最终文件落在 \`{WIKI_PATH}\`(当日所有 slot 共用一份)。不要用 Write 工具直接覆盖,会破坏其他 slot 的 section。
 
 ## 工具:按需深抓 article
 

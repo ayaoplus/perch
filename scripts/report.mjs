@@ -17,7 +17,8 @@
 //   {DATE}               — YYYY-MM-DD(按 topic.timezone)
 //   {SLOT}               — 当前 slot name
 //   {RAW_PATH}           — 当日 raw 文件绝对路径
-//   {WIKI_PATH}          — 本次 wiki 产出的绝对路径
+//   {WIKI_PATH}          — 当日 wiki 文件绝对路径(所有 slot 共享一份,按 `## slot: <name>` 分段)
+//   {WIKI_WRITE_CMD}     — 写入当前 slot section 的命令前缀,Claude 生成报告后管道进去做幂等 upsert
 //   {SUMMARIES_PATH}     — summaries.md 绝对路径
 //   {SOURCES}            — 人读的 source 描述(从 SCHEMA.sources 拼)
 //   {WINDOW_TYPE}        — today | since_prev(取自 slot.window,缺省 today)
@@ -110,15 +111,17 @@ const sourcesDesc = topic.sources
   .join(' + ');
 
 // {FETCH_ARTICLE_CMD}:在 prompt 里直接拼 <status_url> 即可
-const rootDir_ = rootDir;
-const fetchArticleCmd = `node ${path.join(rootDir_, 'scripts', 'fetch-article.mjs')} --topic ${topic.slug}`;
+const fetchArticleCmd = `node ${path.join(rootDir, 'scripts', 'fetch-article.mjs')} --topic ${topic.slug}`;
+// {WIKI_WRITE_CMD}:Claude 生成完 slot markdown 后 pipe 到这里做幂等 upsert
+const wikiWriteCmd = `node ${path.join(rootDir, 'scripts', 'wiki-write.mjs')} --topic ${topic.slug} --date ${date} --slot ${slot}`;
 
 const filled = template
   .replace(/\{TOPIC_SLUG\}/g, topic.slug)
   .replace(/\{DATE\}/g, date)
   .replace(/\{SLOT\}/g, slot)
   .replace(/\{RAW_PATH\}/g, rawDailyPath(topic, date))
-  .replace(/\{WIKI_PATH\}/g, wikiDailyPath(topic, date, slot))
+  .replace(/\{WIKI_PATH\}/g, wikiDailyPath(topic, date))
+  .replace(/\{WIKI_WRITE_CMD\}/g, wikiWriteCmd)
   .replace(/\{SUMMARIES_PATH\}/g, summariesPath(topic))
   .replace(/\{SOURCES\}/g, sourcesDesc)
   .replace(/\{WINDOW_TYPE\}/g, windowInfo.type)
@@ -129,7 +132,7 @@ const filled = template
 
 log(`topic=${topic.slug} slot=${slot} date=${date} window=${windowInfo.type} [${windowInfo.startLabel} → ${windowInfo.endLabel}]`);
 log(`rawPath=${rawDailyPath(topic, date)}`);
-log(`wikiPath=${wikiDailyPath(topic, date, slot)}`);
+log(`wikiPath=${wikiDailyPath(topic, date)}`);
 
 // stdout 输出填好的 prompt — 当前 Claude 会话应接棒读 RAW_PATH,产出 wiki 内容,写入 WIKI_PATH
 process.stdout.write(filled);
