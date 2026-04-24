@@ -11,7 +11,7 @@ Perch 的一等公民是 **Topic** — 一组 `sources + slots + 时段 prompt` 
 一个 Topic 的组成:
 
 ```
-Topic (例: ai-radar / crypto-radar)
+Topic (例: ai-radar / my-radar)
 ├── sources[]        数据源(X List / X Profile),可多条,同一 raw 合并
 ├── slots[]          每日报告时段(morning/noon/evening…),topic 级自定义
 │   └── window       每个 slot 的报告覆盖窗口(today / since_prev)
@@ -53,9 +53,9 @@ node scripts/new-topic.mjs --from-json spec.json
 
 ```json
 {
-  "topic": "crypto-radar",
-  "description": "币圈 AI KOL 每日选题漏斗",
-  "dataPath": "/Users/me/Library/Mobile Documents/iCloud~md~obsidian/Documents/crypto-radar",
+  "topic": "my-radar",
+  "description": "一行人读描述",
+  "dataPath": "/Users/me/Library/Mobile Documents/iCloud~md~obsidian/Documents/my-radar",
   "sources": [
     {
       "slug": "defi-ops",
@@ -112,7 +112,7 @@ const written = await scaffoldTopic(rootDir, spec);
 
 ```json
 {
-  "topic": "crypto-radar",
+  "topic": "my-radar",
   "description": "一行人读描述",
   "sources": [ ... ],
   "slots":   [ ... ]
@@ -152,10 +152,10 @@ const written = await scaffoldTopic(rootDir, spec);
   "default_topic": "ai-radar",
   "timezone": "Asia/Shanghai",
   "topics": {
-    "crypto-radar": {
+    "my-radar": {
       "path": "/Users/me/...absolute-data-path",
       "description": "描述(与 SCHEMA.description 取其一)",
-      "templates_dir": "templates/topics/crypto-radar"
+      "templates_dir": "templates/topics/my-radar"
     }
   }
 }
