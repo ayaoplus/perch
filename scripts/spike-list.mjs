@@ -34,7 +34,7 @@ const result = await fetchXList(listUrl, { limit });
 const listName = result.list?.name || '(no name)';
 const owner = result.list?.ownerHandle ? ` owner=${result.list.ownerHandle}` : '';
 const count = result.items?.length || 0;
-console.error(`[spike-list] list="${listName}"${owner} items=${count} timelineType=${result.timelineType} strategy=${result.fetchStrategy} entriesInStore=${result.entriesInStore} missingIdCount=${result.missingIdCount} apiError=${result.apiError}`);
+console.error(`[spike-list] list="${listName}"${owner} items=${count} timelineType=${result.timelineType} entriesInStore=${result.entriesInStore} missingIdCount=${result.missingIdCount} error=${result.error}`);
 
 if (count === 0) {
   console.error('[spike-list] FAIL: 0 items. Likely not logged in, or list URL changed.');
