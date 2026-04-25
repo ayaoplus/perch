@@ -183,11 +183,12 @@ v3 主链路全部实现:Topic 配置容器 + 5 个角色 method + 通用 prompt
 - Topic 脚手架(交互 / `--from-json`,都有 spec 校验;`prompts` 可省略 → `default`)
 - **slot / window / 凌晨 wrap / canonical end / 独立 digest method 全部消失**
 
-v3.1 新增:
+v3.1 / v3.2 新增:
 
-- **LLM Direct 模式**(`lib/llm.mjs::runPromptWithTools`):脚本直连 Anthropic Messages API + agent loop(read_file / bash tools),让 cron / openclaw / 任意无 Claude Code 会话的 runner 都能驱动 report
+- **LLM Direct 模式**(`lib/llm.mjs::runPromptWithTools`):脚本直连 LLM API + agent loop(read_file / bash tools),让 cron / openclaw / 任意无 Claude Code 会话的 runner 都能驱动 report
 - 两种模式(Skill / Direct)共享同一份 prompt 模板,行为同构
-- Provider 抽象支持 stub(测试用)和 anthropic(默认)
+- **多 provider 支持**:`anthropic`(默认) / `openai`(也兼容 OpenRouter / Together / 本地 vLLM 等 OpenAI-compatible 端点) / `stub`(测试用)
+- **自动 retry / rate-limit 处理**:HTTP 429 + 5xx + 网络抖动 exponential backoff + jitter,respect `retry-after` header
 
 未来会加的能力(详见 DESIGN §8):
 

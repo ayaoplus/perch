@@ -332,12 +332,16 @@ Subcommands(对应 Topic methods):
 --inputs 缺省 → today raw 单文件
 --date   缺省 → today(topic.timezone)
 --section 缺省 → = --prompt
---llm    缺省 → 'skill'(env PERCH_LLM_MODE 可覆盖);'direct' 模式需 ANTHROPIC_API_KEY
+--llm    缺省 → 'skill'(env PERCH_LLM_MODE 可覆盖);'direct' 模式连接真实 LLM API
 
 LLM Direct 模式(脱离 Claude Code 会话,适合 cron / openclaw):
-  ANTHROPIC_API_KEY=sk-ant-... \\
-    perch report --topic ai-radar --prompt evening --llm direct
-  环境变量:PERCH_LLM_MODEL(默认 claude-sonnet-4-5)/ PERCH_LLM_MAX_TOKENS / PERCH_LLM_DEBUG
+  Anthropic:  ANTHROPIC_API_KEY=sk-ant-... perch report ... --llm direct
+  OpenAI:     OPENAI_API_KEY=sk-... PERCH_LLM_PROVIDER=openai perch report ... --llm direct
+  其他兼容:   再加 PERCH_LLM_BASE_URL=https://openrouter.ai/api/v1 (或 Together / 本地 vLLM)
+
+  env: PERCH_LLM_PROVIDER (anthropic/openai/stub) / PERCH_LLM_MODEL / PERCH_LLM_MAX_TOKENS
+       PERCH_LLM_MAX_RETRIES (默认 5,429/5xx/网络抖动自动退避) / PERCH_LLM_INITIAL_BACKOFF_MS
+       PERCH_LLM_DEBUG=1
 
 完整设计见 docs/DESIGN.md。
 `);

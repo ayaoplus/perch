@@ -95,10 +95,11 @@ node scripts/perch.mjs report --topic ai-radar --prompt evening
 ```
 
 env:
-- `ANTHROPIC_API_KEY`(必需)
-- `PERCH_LLM_MODEL`(默认 `claude-sonnet-4-5`)
-- `PERCH_LLM_MAX_TOKENS`(默认 16384)
-- `PERCH_LLM_DEBUG=1`(打印 API request/response 简要)
-- `PERCH_LLM_PROVIDER=stub`(测试用,跳过真实 API)
+- `PERCH_LLM_PROVIDER`(`anthropic`(默认) / `openai` / `stub`)
+- **anthropic**:`ANTHROPIC_API_KEY`,默认模型 `claude-sonnet-4-5`
+- **openai**:`OPENAI_API_KEY` + 可选 `PERCH_LLM_BASE_URL`(支持 OpenRouter / Together / 本地 vLLM 等 OpenAI-compatible),默认模型 `gpt-4o`
+- `PERCH_LLM_MODEL` / `PERCH_LLM_MAX_TOKENS`(默认 16384)
+- `PERCH_LLM_MAX_RETRIES`(默认 5)/ `PERCH_LLM_INITIAL_BACKOFF_MS`(默认 1000):429 / 5xx / 网络抖动 exponential backoff + jitter,respect `retry-after`
+- `PERCH_LLM_DEBUG=1`
 
 Direct 模式的 bash tool cwd 锁到仓库根 + 10 分钟 timeout + 200KB 输出上限。**Prompt injection 风险来自 X 推文内容**,首版不做命令白名单 —— 容器隔离 / 沙箱由 cron / openclaw 层负责。

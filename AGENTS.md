@@ -59,12 +59,12 @@ Agent 如需新建 topic,**首选 `node scripts/perch.mjs admin create --from-js
 | Skill(默认) | Claude Code 会话内,`--llm skill` 或缺省 | 手动跑、调 prompt、debug |
 | Direct | `--llm direct` 或 `PERCH_LLM_MODE=direct` env | cron / openclaw / 无会话 runner |
 
-Direct 模式 env(全部可选,除 API key):
-- `ANTHROPIC_API_KEY`(必需)
-- `PERCH_LLM_MODEL`(默认 `claude-sonnet-4-5`)
-- `PERCH_LLM_MAX_TOKENS`(默认 16384)
-- `PERCH_LLM_DEBUG=1`(API request/response 简要)
-- `PERCH_LLM_PROVIDER=stub`(测试用,跳过真实 API)
+Direct 模式 env:
+- `PERCH_LLM_PROVIDER`(`anthropic`(默认) / `openai` / `stub`)
+- Provider key:`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`(后者可配 `PERCH_LLM_BASE_URL` 指 OpenRouter / Together / 本地 vLLM 等)
+- `PERCH_LLM_MODEL` / `PERCH_LLM_MAX_TOKENS`
+- `PERCH_LLM_MAX_RETRIES` / `PERCH_LLM_INITIAL_BACKOFF_MS`(429/5xx/网络抖动 retry)
+- `PERCH_LLM_DEBUG=1`
 
 两种模式 prompt 模板**完全共享**。Direct 模式的 agent loop 给 LLM 暴露 `read_file` / `bash` 工具,行为同构 Claude Code 会话。
 
