@@ -1,18 +1,15 @@
-# 🌆 全天主报告生成 Prompt
+# 🌆 全天主报告 + 日概览生成 Prompt
 
 ## 任务
 
-基于 `{RAW_PATH}`({DATE} 的 raw 采集),生成 **{SLOT}** 时段全天主报告。
+基于 inputs({DATE} 的 raw 采集),生成全天主报告**并同时输出当日 5-7 句概览**(prepend 到 summaries.md)。
 
-## 时间窗口(唯一真相)
+## 数据范围
 
-- **类型**: {WINDOW_TYPE}
-- **起点**: {WINDOW_START_LABEL}
-- **终点**: {WINDOW_END_LABEL}
+输入文件:
+{INPUTS_LIST}
 
-**严格按这个窗口过滤 raw**(block 标题行的 `MM-DD HH:MM` 字符串比较)。下面所有"今天""全天""今日"均指这个窗口内的内容,不要用你记忆中的"完整 24h"先验。
-
-**slot 定位**:evening 配置为 `window=today`,覆盖归属日 00:00 到当前时刻;若触发落在凌晨(wrap 到昨日),窗口是昨日 `00:00 → 23:59`。窗口长度由上面的占位符决定,报告里不要再写死"24 小时"。
+**报告范围**:{DATE} 当天 raw 中**全部 block**(00:00 - 23:59)。下面所有"今天""全天""今日"均指 {DATE} 当日内容,不要用你训练知识里的"完整 24h"先验。
 
 ## 定位
 
@@ -139,9 +136,9 @@
 ## 输出格式
 
 ```markdown
-# 🌆 AI Radar {SLOT} 报告 — {DATE}
+# 🌆 AI Radar evening 报告 — {DATE}
 
-**数据窗口**: {WINDOW_START_LABEL} → {WINDOW_END_LABEL} ({WINDOW_TYPE}) | **采集源**: {SOURCES} | **窗口内推文**: {N 条} | **涉及 KOL**: {M 位}
+**归属日**: {DATE} | **采集源**: {SOURCES} | **分析推文**: {N 条} | **涉及 KOL**: {M 位}
 
 ---
 
@@ -199,18 +196,34 @@ Signal: 🟢🟢🟢
 2. **每题必有 Takeaway**(Q16/Q17 除外,它们本身就是 Takeaway)
 3. **Q16 是重头戏**:差异化切入点必须具体到"和大路货的区别在哪"
 4. **不够就不凑**:某题没信号就标 ⚪,不要编造
-5. **严格窗口**:早于 `{WINDOW_START_LABEL}` 或晚于 `{WINDOW_END_LABEL}` 的推文一律不分析
+5. **严格基于 inputs**:不要引入训练知识 / 网络信息编造背景
 
-## 写入方式
+## 双产出写入方式
 
-生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+evening 是全天总结,需要**同时输出两件事**(一次 LLM 调用,两次 Bash pipe):
+
+### 1️⃣ 详细 wiki(走 wiki-write)
+
+生成完整 markdown(上面"输出格式"那一份)后,Bash heredoc pipe:
 
 ```bash
 {WIKI_WRITE_CMD} <<'PERCH_EOF'
-(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## slot: {SLOT}` 外层标题,脚本会自动加)
+(把上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## section: {SECTION_NAME}` 外层标题,脚本会自动加)
 PERCH_EOF
 ```
 
-最终文件落在 `{WIKI_PATH}`(当日所有 slot 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 slot 的 section。
+最终文件落在 `{WIKI_PATH}`(当日所有 section 共用一份)。
 
-> v2 备注:summaries.md 的日概览已独立成 `perch digest` 命令,不在本 analyze prompt 内附带产出。完成本报告后请另行运行 `perch digest --topic {TOPIC_SLUG}`(或等 schedule 自动触发)。
+### 2️⃣ 5-7 句日概览(走 summary-write)
+
+紧接着,提炼一条 5-7 句的日概览(用作 `{SUMMARIES_PATH}` 的 `## {DATE}` 索引条目):
+
+```bash
+{SUMMARY_WRITE_CMD} <<'PERCH_EOF'
+(5-7 句概览正文,**不含** `## {DATE}` 标题,脚本自动加。覆盖:2-3 个最主要事件 / KOL 态度分布 / 关键数据 / 中英温差 / 异常信号。紧凑、信息密度高、不堆形容词,提到具体人/项目带 @handle。)
+PERCH_EOF
+```
+
+最终条目 prepend 到 `{SUMMARIES_PATH}` 顶部(同日重跑替换前一次条目,幂等)。
+
+**两步必须都跑**。少一步 = 当日 summary 缺失。**不要**用 Write 工具直接写 wiki / summaries,会破坏文件结构。

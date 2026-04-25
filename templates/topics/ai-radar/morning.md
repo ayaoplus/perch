@@ -2,17 +2,16 @@
 
 ## 任务
 
-基于 `{RAW_PATH}`({DATE} 的 raw 采集),生成 **{SLOT}** 时段简报。
+基于 inputs({DATE} 的 raw 采集),生成早间时段简报。
 
-## 时间窗口(唯一真相)
+## 数据范围
 
-- **类型**: {WINDOW_TYPE}
-- **起点**: {WINDOW_START_LABEL}
-- **终点**: {WINDOW_END_LABEL}
+输入文件:
+{INPUTS_LIST}
 
-**严格按这个窗口过滤 raw**(block 标题行的 `MM-DD HH:MM` 字符串比较)。下面所有问题里出现"窗口内""本时段"等词,都指这个窗口 —— 不要用你记忆中的"早间=12h/15h/overnight"等先验。
+**报告范围**:{DATE} 当天 raw 中**所有 block**。早间报告聚焦"快速跟上节奏",不做严格时间过滤 —— raw 里有什么就分析什么。下面所有问题里出现"窗口内""本时段"都指当前 inputs 的全部内容。
 
-**slot 定位**:morning 在 slots 里是首个 slot。配置为 `since_prev` 时运行时会 fallback 到 `today`(归属日 00:00 起);若你想覆盖"昨晚海外 overnight",在 `slots[0].start_hour` 之前跑 `report now` — 会 wrap 回昨日 evening,那份报告覆盖昨日完整 24h。本报告的时间语义永远以上面的 `{WINDOW_*}` 为准,不要假设窗口长度。
+如果 raw 文件里 block 时间戳跨日(比如凌晨补抓昨晚的),也按归属日 {DATE} 处理(raw 文件名即是归属日)。
 
 ## 聚焦题目(早间版 7 题)
 
@@ -64,9 +63,9 @@
 ## 输出格式
 
 ```markdown
-# 🌅 AI Radar {SLOT} 简报 — {DATE}
+# 🌅 AI Radar morning 简报 — {DATE}
 
-**数据窗口**: {WINDOW_START_LABEL} → {WINDOW_END_LABEL} ({WINDOW_TYPE}) | **采集源**: {SOURCES} | **窗口内推文**: {N 条}
+**归属日**: {DATE} | **采集源**: {SOURCES} | **分析推文**: {N 条}
 
 ---
 
@@ -110,16 +109,16 @@ Signal: ...
 
 - **Signal 强度**:🟢🟢🟢 = 跨 3+ 源独立验证 / 🟢🟢 = 2 源 / 🟢 = 1 源但有独立判断价值 / ⚪ = 数据不足
 - **Takeaway 不能水**:写不出具体建议的题,老实写"无特殊行动建议"
-- **窗口外的推文不要分析**,即使它看起来很相关 — 违反就是不遵守 prompt 的时间窗口
+- **严格基于 inputs**,不要引入你训练知识 / 外部信息编造背景
 
 ## 写入方式
 
-生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## section: {SECTION_NAME}` 段做幂等 upsert(其他 section 原样保留,同 section 重跑替换自己那段):
 
 ```bash
 {WIKI_WRITE_CMD} <<'PERCH_EOF'
-(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## slot: {SLOT}` 外层标题,脚本会自动加)
+(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## section: {SECTION_NAME}` 外层标题,脚本会自动加)
 PERCH_EOF
 ```
 
-最终文件落在 `{WIKI_PATH}`(当日所有 slot 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 slot 的 section。
+最终文件落在 `{WIKI_PATH}`(当日所有 section 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 section。

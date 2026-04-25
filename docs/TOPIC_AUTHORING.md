@@ -1,4 +1,4 @@
-# Topic Authoring Guide (v2)
+# Topic Authoring Guide (v3)
 
 > 给 **人** 和 **agent** 读的"如何配置一个新 Topic"完整指南。架构层面的"为什么这么设计"见 `docs/DESIGN.md`;本文件专注"怎么做"。
 
@@ -6,26 +6,27 @@
 
 ## 1. 概念速览
 
-Perch 的一等公民是 **Topic** —— 一个对象,封装 `sources + slots + 时段 prompt + (可选)digest 模板` 的完整配置。所有领域操作都是 `topic.<method>()`。换领域 = 换一整套 topic 配置,框架代码不动。
+Perch 的一等公民是 **Topic** —— 一个对象,封装 `sources + prompts + 数据目录` 的完整配置。所有领域操作都是 `topic.<method>()`。换领域 = 换一整套 topic 配置 + prompt 模板,框架代码不动。
 
 一个 Topic 的组成:
 
 ```
 Topic (例: ai-radar)
-├── sources[]           数据源(X List / X Profile),可多条,同一 raw 合并
-├── slots[]             每日报告时段(morning/noon/evening…),topic 级自定义
-│   └── window          每个 slot 的报告覆盖窗口(today / since_prev)
-├── analyze 模板        每个 slot 一份 `<slot>.md`,给 Claude 用的问题清单
-├── digest 模板(可选)  `digest.md`,日概览的自定义 prompt(缺省走通用模板)
-└── 数据目录            raw / wiki / summaries / cache / archive,落盘在独立路径
+├── sources[]              数据源(X List / X Profile),可多条,同一 raw 合并
+├── prompts/               prompt 模板集(任意数量、任意命名)
+│   ├── morning.md
+│   ├── noon.md
+│   ├── evening.md         (典型双产出:wiki + summary)
+│   └── weekly.md          (按需新增)
+└── 数据目录                raw / wiki / summaries / cache / archive,落盘在独立路径
 ```
 
 关键不变量:
 
-- **Source 不等于 Topic**。多个 source 默认合并到同一 raw 文件(`raw/daily/YYYY-MM-DD.md`),用 `via: <slug>` 区分。如果某 source 要独立产出,**升级成新 topic**,不要在 raw 层分目录
-- **Slot name 是文件名也是占位符值**,同时被 wiki 文件名、prompt 模板文件名、`{SLOT}` 占位符引用。改名 = 跨三处改动
-- **Slot window 不改 raw 结构**,只是给 Claude 的 prompt 里注入时间边界让它自己按 `MM-DD HH:MM` 过滤。raw 永远是当日整天的
-- **Topic 逻辑配置(SCHEMA + prompt)在 git 里**;**数据目录不在 git 里**。前者走 `templates/topics/<slug>/`,后者由 `config.json` 的 `topics.<slug>.path` 指定(可以是 iCloud)
+- **Source 不等于 Topic**。多个 source 默认合并到同一 raw 文件,用 `via: <slug>` 区分。某 source 要独立产出 = **升级成新 topic**
+- **Prompt 文件名 = Prompt 标识**。`templates/topics/<slug>/morning.md` 即 `perch report --prompt morning` 的引用
+- **调度由外部决定**。framework 不做"什么时候出哪份报告"的判断,cron / openclaw / agent 自己拼命令
+- **Topic 逻辑配置(SCHEMA + prompts)在 git 里**;**数据目录不在 git 里**
 
 ---
 
@@ -37,10 +38,10 @@ Topic (例: ai-radar)
 node scripts/perch.mjs admin create
 ```
 
-一步步问:slug / 描述 / 数据路径 / sources / slots。确认后一次性生成:
+一步步问:slug / 描述 / 数据路径 / sources / prompts。生成:
 - `templates/topics/<slug>/SCHEMA.md`
-- 每个 slot 一份 `<slot>.md` analyze prompt 骨架
-- 在 `config.json` 的 `topics` 下注册条目
+- 每份 `<prompt>.md` 骨架
+- `config.json` 的 topic 注册
 
 向导**不会覆盖已有文件**,冲突即退出。
 
@@ -66,15 +67,13 @@ node scripts/perch.mjs admin create --from-json spec.json
       "fetch_limit": 80
     }
   ],
-  "slots": [
-    { "name": "morning", "start_hour": 6, "window": "today" },
-    { "name": "afternoon", "start_hour": 14, "window": "since_prev" },
-    { "name": "evening", "start_hour": 19, "window": "today" }
-  ]
+  "prompts": ["morning", "noon", "evening"]
 }
 ```
 
-也可以直接 import 用:
+`prompts` 缺省 = `["default"]`(单 prompt)。
+
+也可以 import 用:
 
 ```js
 import { Topic } from './lib/topic.mjs';
@@ -85,16 +84,14 @@ if (err) throw new Error(err);
 const written = await Topic.create(rootDir, spec);
 ```
 
-### 2.3 手工(最透明,也最容易错)
+### 2.3 手工
 
 四步:
 
 1. 建目录 `templates/topics/<slug>/`
-2. 写 `SCHEMA.md` —— 顶部 JSON frontmatter(定义 sources + slots),下面人读说明
-3. 每个 slot 写一份 `<slot>.md` analyze prompt
+2. 写 `SCHEMA.md` —— JSON frontmatter 只放 sources;下面人读说明
+3. 每份 prompt 写一个 `<name>.md`
 4. 在 `config.json` 的 `topics` 下加条目
-
-见下节字段详解。
 
 ---
 
@@ -102,14 +99,13 @@ const written = await Topic.create(rootDir, spec);
 
 ### 3.1 `SCHEMA.md` frontmatter
 
-文件顶部 `---` 之间一段 **合法 JSON**(不是 YAML)。
+文件顶部 `---` 之间一段 **合法 JSON**(不是 YAML)。**v3 只有 sources**(无 slots、无 schedule):
 
 ```json
 {
   "topic": "my-radar",
   "description": "一行人读描述",
-  "sources": [ ... ],
-  "slots":   [ ... ]
+  "sources": [ ... ]
 }
 ```
 
@@ -121,23 +117,7 @@ const written = await Topic.create(rootDir, spec);
 | `type` | `"list"` \| `"profile"` | ✅ | list = X List;profile = 用户时间线 |
 | `target` | string | ✅ | list 时:`https://x.com/i/lists/NNN`。profile 时:handle 或完整 URL |
 | `label` | string | | 人读备注 |
-| `fetch_limit` | int 1-200 | | 每次抓取上限,默认 80。设计上是 **generous**:给 pinned / 当日高频账号留余量 |
-
-#### `slots[]`
-
-| 字段 | 类型 | 必填 | 含义 |
-|---|---|---|---|
-| `name` | string | ✅ | `^[a-z][a-z0-9-]*$`,不得为保留字 `now` |
-| `start_hour` | int 0-23 | ✅ | 该 slot 从几点起。加载时自动按 `start_hour` 升序 |
-| `window` | `"today"` \| `"since_prev"` | | analyze 报告覆盖窗口,默认 `today` |
-
-**缺省整个 `slots` 字段**会 fallback 到三槽 `morning@5 / noon@12 / evening@18`。这条 fallback 在两处生效:
-- **手写 SCHEMA.md** 时:Topic.load 运行时自动回填
-- **`admin create --from-json`** 时:scaffoldTopic 接受省略,但会把 DEFAULT_SLOTS **显式写进** SCHEMA.md(打开就能看到完整配置,不依赖运行时行为)
-
-**window 语义**:
-- `today`:覆盖归属日 00:00 → 当前触发时刻。适合"今天讨论最多的标的是什么"等**累积统计型**问题
-- `since_prev`:只覆盖"上一 slot.start_hour → 当前触发时刻"。适合"这段时间有什么新冒出来的"等**增量型**问题。当前 slot 是第一个时,自动 fallback 为 `today`(避免跨昨日 raw)
+| `fetch_limit` | int 1-200 | | 每次抓取上限,默认 80 |
 
 ### 3.2 `config.json` 的 topic 条目
 
@@ -158,89 +138,86 @@ const written = await Topic.create(rootDir, spec);
 | 字段 | 含义 |
 |---|---|
 | `default_topic` | `--topic` 未传时的 topic slug |
-| `timezone` | 全局时区,决定"今天"是哪天、时段切分在哪 |
+| `timezone` | 全局时区,决定"今天"是哪天 |
 | `topics.<slug>.path` | **绝对路径**,raw/wiki/summaries/cache/archive 住这里 |
 | `topics.<slug>.description` | 回退描述(SCHEMA.description 优先) |
-| `topics.<slug>.templates_dir` | 相对仓库根的模板目录,通常 `templates/topics/<slug>` |
+| `topics.<slug>.templates_dir` | 相对仓库根的模板目录 |
 
-### 3.3 Slot prompt 模板(`<slot>.md`)
+### 3.3 Prompt 模板(`<name>.md`)
 
-每个 slot 对应同目录一份 markdown,顶部没有 frontmatter(全是 prompt 正文)。
+每个 prompt 对应同目录一份 markdown,顶部没有 frontmatter(全是 prompt 正文)。
 
-可用占位符(analyze 渲染时替换):
+可用占位符(`report` 渲染时替换):
 
 | 占位符 | 值 |
 |---|---|
 | `{TOPIC_SLUG}` | topic slug |
-| `{DATE}` | `YYYY-MM-DD`(**归属日**,不是"今天"—— wrap 场景指向昨天) |
-| `{SLOT}` | 当前 slot name |
-| `{RAW_PATH}` | 归属日 raw 文件绝对路径 |
-| `{WIKI_PATH}` | 归属日 wiki 文件绝对路径(**当日所有 slot 共用一份**) |
-| `{WIKI_WRITE_CMD}` | `node /abs/path/to/scripts/wiki-write.mjs --topic <slug> --date <date> --slot <slot>` |
-| `{SUMMARIES_PATH}` | summaries.md 绝对路径(只读引用,不要在 analyze 里写) |
+| `{DATE}` | `--date` 或 today(topic.timezone) |
+| `{INPUTS}` | comma-separated 路径串(原样) |
+| `{INPUTS_LIST}` | 多行列表(`- path1\n- path2\n...`) |
+| `{PROMPT_NAME}` | `--prompt` 值 |
+| `{SECTION_NAME}` | `--section` 或缺省 = `--prompt` |
+| `{WIKI_PATH}` | `wiki/daily/{date}.md` 绝对路径 |
+| `{WIKI_WRITE_CMD}` | `node /abs/path/scripts/wiki-write.mjs --topic <slug> --date <date> --section <section>` |
+| `{SUMMARIES_PATH}` | `summaries.md` 绝对路径 |
+| `{SUMMARY_WRITE_CMD}` | `node /abs/path/scripts/summary-write.mjs --topic <slug> --date <date>` |
 | `{SOURCES}` | 人读 source 描述 |
-| `{WINDOW_TYPE}` | `today` \| `since_prev` |
-| `{WINDOW_START_LABEL}` · `{WINDOW_END_LABEL}` | `YYYY-MM-DD HH:MM` |
 | `{ARTICLE_CACHE_DIR}` | 当月 article 缓存目录绝对路径 |
-| `{FETCH_ARTICLE_CMD}` | `node /abs/path/to/scripts/fetch-article.mjs --topic <slug>` |
+| `{FETCH_ARTICLE_CMD}` | `node /abs/path/scripts/fetch-article.mjs --topic <slug>` |
+
+**v2 → v3 变化**:删除 `{SLOT} / {WINDOW_TYPE} / {WINDOW_START_LABEL} / {WINDOW_END_LABEL} / {RAW_PATH}`。时间过滤由 prompt 自己写(引用 `{DATE}` + 硬编码,如 noon prompt 写 "只看 {DATE} 12:00 之后")。
 
 **prompt 作者约定**:
-- 模板里**不要硬编码**"过去 12h""完整 24h"等小时数,引用 `{WINDOW_*}` 占位符
-- **不要让 Claude 用 Write 直接写 `{WIKI_PATH}`** —— 当日 wiki 是共享文件,直接覆盖会抹掉其他 slot 的 section。必须用 `{WIKI_WRITE_CMD} <<'PERCH_EOF' ... PERCH_EOF` 走脚本 upsert
-- **summaries 不要在 analyze prompt 里产出**(v2 拆出独立 digest method)
-- ai-radar 三份 prompt 是参考样例
+- 输入语义靠 `{INPUTS_LIST}` 列出文件,Claude 自己 Read
+- **不要用 Write 直接写 `{WIKI_PATH}` / `{SUMMARIES_PATH}`** —— 必须用 `{WIKI_WRITE_CMD}` / `{SUMMARY_WRITE_CMD}` heredoc pipe
+- 时间过滤由 prompt 自己描述(典型:morning 看全天 / noon 看 12:00 之后 / evening 看全天 + 出 summary)
+- ai-radar 的三份 prompt 是参考样例
 
-### 3.4 Digest prompt 模板(可选)
+### 3.4 双产出 prompt(evening 类)
 
-如果 topic 没有 `templates/topics/<slug>/digest.md`,digest 走 `lib/digest.mjs` 的通用默认模板(适合大多数场景)。
+evening 类全天总结想同时产出 wiki section + summary 概览,prompt 里写两个 Bash pipe 命令:
 
-要自定义,创建该文件,可用占位符:
+```markdown
+## 双产出写入方式
 
-| 占位符 | 值 |
-|---|---|
-| `{TOPIC_SLUG}` | topic slug |
-| `{DATE}` | 归属日 |
-| `{WIKI_PATH}` | 当日 wiki 文件绝对路径(digest 的输入) |
-| `{SUMMARIES_PATH}` | summaries.md 绝对路径(写入目标) |
-| `{SUMMARY_WRITE_CMD}` | `node /abs/path/to/scripts/summary-write.mjs --topic <slug> --date <date>` |
+### 1. 详细 wiki
 
-写入约定同 wiki-write:用 `{SUMMARY_WRITE_CMD} <<'PERCH_EOF' ... PERCH_EOF` heredoc pipe,**不要**用 Write 直接覆盖 `{SUMMARIES_PATH}`。
+\`\`\`bash
+{WIKI_WRITE_CMD} <<'PERCH_EOF'
+(完整报告 markdown)
+PERCH_EOF
+\`\`\`
 
-### 3.5 `analyze` 的 slot 映射 + 日期回退 + endLabel
+### 2. 5-7 句日概览
 
-**所有 agent 在 prompt 处理 raw 时必须理解这一节**。
+\`\`\`bash
+{SUMMARY_WRITE_CMD} <<'PERCH_EOF'
+(5-7 句正文,不含 ## DATE 标题,脚本自动加)
+PERCH_EOF
+\`\`\`
+```
 
-`analyze` 对 `now` 和显式指定 slot 统一走同一条 `resolveSlotAndDate`,核心是"当 slot 在今天**还没开始**时,回退到昨天那个实例":
+一次 LLM 调用,两次 Bash pipe,两次写盘。
 
-| slotArg | hour(topic.timezone)条件 | slot | `{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` |
-|---|---|---|---|
-| `now` | `hour ≥ slots[0].start_hour` | `pickSlot(hour)` | **今天** |
-| `now` | `hour < slots[0].start_hour`(凌晨 wrap) | **最后一个 slot** | **昨天** |
-| `<显式>` | `hour ≥ slotDef.start_hour` | 显式 slot | **今天** |
-| `<显式>` | `hour < slotDef.start_hour` | 显式 slot | **昨天** |
+### 3.5 调度
 
-**`{WINDOW_END_LABEL}` 规则**:
+v3 框架**不做调度**。报告节奏由外部 cron / openclaw / agent 决定:
 
-| 归属日 | endLabel |
-|---|---|
-| 昨天 | **canonical end**:下一 slot 的 `start_hour:00`,末 slot 用归属日 `23:59` |
-| 今天 | **`min(now, canonical end)`**:slot 进行中→now;slot 已过→canonical |
+```bash
+0 8  * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt morning
+0 13 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt noon
+0 19 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt evening
+```
 
-**例子**(ai-radar slots=`morning@5 / noon@12 / evening@18`):
+凌晨补跑昨天:
 
-| 触发时刻 CST | 命令 | slot / date | window |
-|---|---|---|---|
-| 00:38 | `analyze` | evening / 昨天 | `今天-1 00:00 → 23:59` |
-| 00:38 | `analyze --slot noon` | noon / 昨天 | `今天-1 05:00 → 18:00` |
-| 14:00 | `analyze` | noon / 今天 | `今天 05:00 → 14:00` |
-| 14:00 | `analyze --slot noon` | noon / 今天 | `今天 05:00 → 14:00` |
-| 19:00 | `analyze --slot noon` | noon / 今天 | `今天 05:00 → 18:00` |
-| 23:30 | `analyze` | evening / 今天 | `今天 00:00 → 23:30` |
+```bash
+0 3 * * * perch report --topic ai-radar --prompt evening \
+    --date $(date -d yesterday +%F) \
+    --inputs raw/daily/$(date -d yesterday +%F).md
+```
 
-**agent 使用建议**:
-- **推荐用 `analyze` 不带 `--slot`** —— 时区 / wrap / 日期 / endLabel 全自动
-- **显式 `analyze --slot <name>`** 在今天还没到该 slot 时,会自动指向**昨天**那个实例(补跑 / 复盘)
-- 想生成"今天某个未来 slot"的报告 —— 等到那个 slot 时段再跑
+shell 时间运算 + 文件路径自己拼,框架不做特殊处理。
 
 ---
 
@@ -248,7 +225,7 @@ const written = await Topic.create(rootDir, spec);
 
 文件:`<path>/raw/daily/YYYY-MM-DD.md`
 
-一条推文 = 一个 block,**全局**时间倒序(最新在上)。每次 `ingest` 把"已有 block"和"新抓 block"合并后整体按 `MM-DD HH:MM` 重排写回(不是简单前插)。
+一条推文 = 一个 block,**全局**时间倒序(最新在上)。每次 `ingest` 把已有 + 新抓 block 合并后整体按 `MM-DD HH:MM` 重排写回(不是简单前插)。
 
 block 结构:
 
@@ -272,8 +249,8 @@ via: slug1, slug2
 
 - **去重粒度 = 顶层 statusId**。只扫 `## ` 标题行的 `/status/(\d+)`
 - **纯 RT 共享原推 statusId**:多人 RT → 一个 block + `reposted by: @A, @B`
-- **Quote tweet 有独立 statusId**:多个 quote → 多个 block,通过 `🔗 quote: ... [url]` 关联
-- **长推已在 ingest 阶段自动 hydrate**:raw 里的正文是完整的
+- **Quote tweet 有独立 statusId**:多个 quote → 多个 block,通过 quote URL 关联
+- **长推已在 ingest 阶段自动 hydrate**:raw 里是完整正文
 - **Article 全文不在 raw 里**:只有 `🖼️ article: "title"` 预览 + statusUrl,按需 enrich
 - **外链不抓**:只有 `🔗 link: <url>`,不展开
 
@@ -281,7 +258,7 @@ via: slug1, slug2
 
 ## 5. 按需深抓 Twitter Article
 
-当 analyze 里 Claude 看到 `🖼️ article: "title"` 预览且回答需要正文时:
+当 report 里 Claude 看到 `🖼️ article: "title"` 预览且回答需要正文时:
 
 ```bash
 node scripts/fetch-article.mjs <status_url> [--topic <slug>]
@@ -313,10 +290,10 @@ node scripts/perch.mjs enrich --topic <slug> --url <status_url>
 <topic.path>/
 ├── raw/
 │   └── daily/YYYY-MM-DD.md     当日原始采集(多 source 合并,时间倒序)
-├── summaries.md                每日概览(digest 维护,## YYYY-MM-DD 倒序)
+├── summaries.md                每日概览(evening 类双产出 prompt 维护)
 ├── wiki/
-│   ├── daily/YYYY-MM-DD.md     当日所有 slot 合并(按 ## slot: <name> 分段)
-│   └── topic/<name>.md         按需累积的主题报告(v2 不实现)
+│   ├── daily/YYYY-MM-DD.md     当日所有 section(按 ## section: <name> 分段)
+│   └── topic/<name>.md         按需累积的主题报告(v3 不实现)
 ├── cache/
 │   └── articles/YYYY-MM/<statusId>.md   按需深抓的 article 正文
 └── archive/
@@ -327,11 +304,11 @@ node scripts/perch.mjs enrich --topic <slug> --url <status_url>
 
 ```
 templates/topics/<slug>/
-├── SCHEMA.md         frontmatter(sources + slots)+ 人读说明
-├── morning.md        每个 slot.name 一份 analyze prompt
+├── SCHEMA.md         frontmatter(只 sources)+ 人读说明
+├── morning.md        prompt 模板(任意数量、任意命名)
 ├── noon.md
 ├── evening.md
-└── digest.md         可选:digest 自定义模板;缺省走通用默认
+└── weekly.md         按需新增
 ```
 
 ---
@@ -345,72 +322,64 @@ templates/topics/<slug>/
 node scripts/perch.mjs admin create
 # (或) node scripts/perch.mjs admin create --from-json spec.json
 
-# 2. 编辑 prompt —— 把每个 <slot>.md 里的占位问题换成真问题
+# 2. 编辑 prompt — 把每个 <name>.md 里的占位问题换成真问题
 vim templates/topics/<slug>/morning.md
 ...
 
 # 3. 确认 Chrome 开着 --remote-debugging-port=9222 且登录了 X
 
-# 4. Dry 一次(不写盘,看抓到什么)
+# 4. Dry 一次(不写盘)
 node scripts/perch.mjs ingest --topic <slug> --dry
 
 # 5. 正式采集(一天多次跑自动按 statusId 去重 + 全局时间重排)
 node scripts/perch.mjs ingest --topic <slug>
 
-# 6. 生成某个 slot 的报告(skill 模式:打 prompt → Claude 接棒生成 → pipe wiki-write)
-node scripts/perch.mjs analyze --topic <slug>            # 自动选 slot + 凌晨 wrap
-node scripts/perch.mjs analyze --topic <slug> --slot evening  # 显式指定
+# 6. 出报告(skill 模式:打 prompt → Claude 接棒生成 → pipe wiki-write)
+node scripts/perch.mjs report --topic <slug> --prompt morning
 
-# 7. 当日概览(digest 独立 method)
-node scripts/perch.mjs digest --topic <slug>
-
-# 8. 月末归档
+# 7. 月末归档
 node scripts/perch.mjs archive --topic <slug> --dry-run
 node scripts/perch.mjs archive --topic <slug>
 ```
 
 **agent 自动化建议**:
-- `ingest`:定时 3~4 次/天,CLI 幂等
-- `analyze`:优先用不带 `--slot`(等价 `now`),时区 / wrap 全自动。Claude 接棒后**必须用 `{WIKI_WRITE_CMD}` heredoc pipe**,不要 Write 直接覆盖 `{WIKI_PATH}`
-- `digest`:每天 evening 之后跑一次(或者将来由 schedule 自动 chain)
-- `archive`:每月 1 号跑一次,前置 `--dry-run`
+- `ingest`:cron 3-4 次/天
+- `report`:cron 各时段一次,prompt 名对应该时段
+- 凌晨补跑昨天:cron 命令显式传 `--date` + `--inputs`
+- `archive`:每月 1 号一次,前置 `--dry-run`
 
 ---
 
 ## 8. 常见坑 / 设计边界
 
 - **同一 source 想拆出独立产出**:升级为**新 topic**,不要在 raw 层分目录
-- **长推 / quote 正文完整性**:Adapter 层从 X redux store 直接读,`note_tweet` 已合并进 `full_text`,长推 + quote 全文都现成
-- **时段模板缺失**:`analyze` 直接报错退出。新增 slot 记得同步建 prompt 模板
-- **slot 名字叫 `now`**:Topic.load 阶段被拒(保留字)
-- **时区不是 topic 级**:v2 全局只有一个 `timezone`,跨时区多 topic 留 v2.x
+- **长推 / quote 正文完整性**:Adapter 层从 X redux store 直接读,`note_tweet` 已合并进 `full_text`
+- **Prompt 缺失**:`report` 直接报错退出。新增 prompt = 加一份 `.md`
+- **时区不是 topic 级**:v3 全局只有一个 `timezone`
 - **article cache 跨月不复用**:故意简化,让 archive 能无脑整目录搬
 - **外链不抓**:设计边界
-- **凌晨跑 analyze wrap 到昨天**:设计行为,`date` / `raw` / `wiki` / `window` 一起回退
-- **`since_prev` 首 slot fallback 到 today**:不要在 morning prompt 里暗示"过去 12-15h 包含昨晚",当前实现不支持跨昨日 raw
-- **endLabel 绝不溢出到未来或下一 slot**:`min(now, canonical)` 杜绝
-- **prompt 里硬编码小时数**:不要,用 `{WINDOW_*}` 占位符
-- **summaries 在 analyze prompt 里产出**(v1 旧行为):v2 已拆,**analyze prompt 不要再附带 summaries 任务**;summary 由独立的 `perch digest` 产出
-- **Write 工具直接覆盖 wiki / summaries**:绝对不能,会抹掉同文件其他 slot / 其他天的内容。永远走 `{WIKI_WRITE_CMD}` / `{SUMMARY_WRITE_CMD}` heredoc pipe
+- **Write 工具直接覆盖 wiki / summaries**:绝对不能,会抹掉同文件其他 section / 其他天的内容
+- **凌晨补跑昨天**:cron 显式传 `--date $(date -d yesterday +%F)` + `--inputs <昨天 raw>`,框架不做自动 wrap
+- **prompt 里硬编码小时数**:OK —— prompt 文件即是单一 source of truth(典型:noon 写 "只看 {DATE} 12:00 之后")。这是 v3 与 v2 的关键差别(v2 用 `{WINDOW_*}` 占位符)
+- **wiki section 顺序**:按写入顺序;改 cron 顺序就改 wiki 顺序。框架不强加排序
 
 ---
 
 ## 9. 给 agent 的导航
 
-**代码入口(按 v2 角色调用顺序)**:
+**代码入口(按 v3 角色调用顺序)**:
 - ingest:  `scripts/perch.mjs ingest` → `lib/ingest.mjs::ingest` → `lib/x-fetcher.mjs` → `lib/normalize.mjs`
-- analyze: `scripts/perch.mjs analyze` → `lib/analyze.mjs::analyze` → 渲染 prompt → stdout(skill 模式)→ Claude 接棒 → `scripts/wiki-write.mjs` → `lib/wiki.mjs::upsertWikiSlotSection`
-- digest:  `scripts/perch.mjs digest` → `lib/digest.mjs::digest` → 渲染 prompt → stdout → Claude 接棒 → `scripts/summary-write.mjs` → `lib/wiki.mjs::prependSummaryEntry`
-- enrich:  `scripts/perch.mjs enrich` → `lib/enrich.mjs::enrich` → `lib/article-cache.mjs`(也可由 prompt 内 Claude 直接 Bash `scripts/fetch-article.mjs`)
+- report:  `scripts/perch.mjs report` → `lib/report.mjs::report` → 渲染 prompt → stdout(skill 模式)→ Claude 接棒 → `scripts/wiki-write.mjs` → `lib/wiki.mjs::upsertWikiSection`(必要时再 pipe `scripts/summary-write.mjs` → `lib/wiki.mjs::prependSummaryEntry`)
+- enrich:  `scripts/perch.mjs enrich` → `lib/enrich.mjs::enrich` → `lib/article-cache.mjs`
 - archive: `scripts/perch.mjs archive` → `lib/archive.mjs::archive`
 - admin:   `scripts/perch.mjs admin` → `lib/admin.mjs::scaffoldTopic`(或 `Topic.create`)
-- Topic 加载: `lib/topic.mjs`(`Topic.load` / `Topic.list` / `Topic.create`;`DEFAULT_SLOTS` 也从这里导出;`loadTopic` 函数保留作为兼容 wrapper)
+- Topic 加载: `lib/topic.mjs`(`Topic.load` / `Topic.list` / `Topic.create`;`loadTopic` 函数保留作为兼容 wrapper)
 
 **给自动化 agent 的关键约束**:
 - **新建 topic** → 首选 `node scripts/perch.mjs admin create --from-json <spec>` 或 `Topic.create(rootDir, spec)`
 - **不要手工拼** SCHEMA.md + config.json
-- **不要把时间窗口写死在 prompt 模板**里 —— 用 `{WINDOW_*}` 占位符
-- **生成报告优先用 `analyze` 不带 `--slot`** —— 时区 / wrap / endLabel 全自动
-- **读 raw 别假设"今天"就是 CLI 触发那天** —— 永远用 `{DATE}` 占位符
+- **生成报告**:每份 prompt 文件名(去 `.md`)即 `--prompt` 值
+- **读 raw 别假设"今天"就是 CLI 触发那天** —— 永远用 prompt 里的 `{DATE}` 占位符
+- **时间过滤**:prompt 自己写(noon 类硬编码 "只看 {DATE} 12:00 之后";morning / evening 看全部 inputs)
 
-**修改代码前**必读 `CLAUDE.md` 和 `docs/DESIGN.md`。不要越过 Adapter / Domain / Tool 三层分工(见 DESIGN §2.2)。
+**修改代码前**必读 `CLAUDE.md` 和 `docs/DESIGN.md`。

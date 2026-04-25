@@ -2,17 +2,16 @@
 
 ## 任务
 
-基于 `{RAW_PATH}`({DATE} 的 raw 采集),生成 **{SLOT}** 时段快讯。
+基于 inputs({DATE} 的 raw 采集),生成午间时段快讯,聚焦"早间之后新增的内容"。
 
-## 时间窗口(唯一真相)
+## 数据范围
 
-- **类型**: {WINDOW_TYPE}
-- **起点**: {WINDOW_START_LABEL}
-- **终点**: {WINDOW_END_LABEL}
+输入文件:
+{INPUTS_LIST}
 
-**严格按这个窗口过滤 raw**(block 标题行的 `MM-DD HH:MM` 字符串比较)。下面所有"窗口内""新增"都指这个窗口,不要用"过去 5h / 7h"之类的先验估算。
+**报告范围**:**{DATE} 12:00 之后发布的 block**(block 标题行的 `MM-DD HH:MM` 字符串与 `{DATE}` 当日 `12:00` 字面比较,只看 ≥ 12:00 的)。早间已总结过的事件不重复,只列发酵和新增。
 
-**slot 定位**:noon 配置为 `since_prev`,正常情况下覆盖"上一 slot 起点 → 触发时刻"这段**增量**(而不是从今日 00:00 开始)。窗口具体长度由 `{WINDOW_START_LABEL}` 和 `{WINDOW_END_LABEL}` 决定,不假设固定小时数。
+如果 12:00 之后没有任何 block,这本身就是"安静时段"信号(见 Q1-new 判定规则)。
 
 ## 定位
 
@@ -53,9 +52,9 @@
 ## 输出格式
 
 ```markdown
-# 🌞 AI Radar {SLOT} 快讯 — {DATE}
+# 🌞 AI Radar noon 快讯 — {DATE}
 
-**数据窗口**: {WINDOW_START_LABEL} → {WINDOW_END_LABEL} ({WINDOW_TYPE}) | **窗口内推文**: {N 条}
+**报告范围**: {DATE} 12:00 之后 | **分析推文**: {N 条}
 
 ---
 
@@ -100,16 +99,16 @@
 - **极简**:整篇报告控制在 15 行内,没新事件就更短
 - **判断清晰**:写清楚"有事 vs 无事",不要模糊其词
 - **不要凑字数**:没内容就直说,让用户信任你的信号过滤能力
-- **严格窗口**:早于 `{WINDOW_START_LABEL}` 的推文即使很相关也不分析,那是早间简报的覆盖范围
+- **严格 12:00 切线**:早于 `{DATE} 12:00` 的推文即使很相关也不分析,那是早间简报的覆盖范围
 
 ## 写入方式
 
-生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## section: {SECTION_NAME}` 段做幂等 upsert(其他 section 原样保留):
 
 ```bash
 {WIKI_WRITE_CMD} <<'PERCH_EOF'
-(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## slot: {SLOT}` 外层标题,脚本会自动加)
+(把你上面"输出格式"里生成的完整 markdown 原样放这里,**不要**再包 `## section: {SECTION_NAME}` 外层标题,脚本会自动加)
 PERCH_EOF
 ```
 
-最终文件落在 `{WIKI_PATH}`(当日所有 slot 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 slot 的 section。
+最终文件落在 `{WIKI_PATH}`(当日所有 section 共用一份)。不要自己用 Write 工具直接覆盖。

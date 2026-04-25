@@ -1,4 +1,4 @@
-# Perch — Project Guidelines (v2)
+# Perch — Project Guidelines (v3)
 
 ## 项目定位
 
@@ -22,49 +22,60 @@
 - 函数名 / 变量名要一眼看明白用途,变量作用域越小越好
 - 同样的逻辑出现 3 次才抽象
 
-## v2 架构原则
-
-按 DESIGN §2 的两个正交维度:
+## v3 架构原则
 
 ### 角色维度(信息生命周期)
 
 | 角色 | 实现 | 职责 |
 |---|---|---|
-| **Ingest** | `lib/ingest.mjs` | 外部 source → 当日 raw |
-| **Analyze** | `lib/analyze.mjs` | raw + slot 窗口 → wiki section(LLM 介入) |
-| **Digest** | `lib/digest.mjs` | 当日 wiki → summaries 条目(LLM 介入) |
+| **Ingest** | `lib/ingest.mjs` | 外部 source → raw 文件(默认 today raw,可 `--out`) |
+| **Report** | `lib/report.mjs` | 通用 prompt runner:渲染 prompt → LLM(skill 模式) |
 | **Enrich** | `lib/enrich.mjs` | 单点深抓 article → 月度缓存 |
 | **Archive** | `lib/archive.mjs` | 月度归档 |
 | **Admin** | `lib/admin.mjs` | Topic 配置 CRUD |
 
-新需求(周报、跨 topic 查询)是给 Topic 加 method,不是新增"命令"。角色清单是收敛的。
+新形态报告(周报、专题分析)= 写一份 prompt `.md`,**不动框架**。框架只有 5 个角色,清单是收敛的。
 
 ### 实现层维度
 
 | 层 | 位置 | 做什么 |
 |---|---|---|
 | **Adapter** | `lib/x-fetcher.mjs` · `lib/x-adapter.mjs` | 和外部世界打交道:CDP / X redux store |
-| **Domain** | `lib/topic.mjs`(Topic class)+ 6 个角色模块 | 领域逻辑;接收 Topic 实例完成生命周期一步 |
-| **Tool** | `lib/normalize.mjs` · `lib/wiki.mjs` · `lib/article-cache.mjs` | 可组合原子(format / dedup / 路径辅助 / idempotent upsert) |
+| **Domain** | `lib/topic.mjs`(Topic class)+ 5 个角色模块 | 领域逻辑 |
+| **Tool** | `lib/normalize.mjs` · `lib/wiki.mjs` · `lib/article-cache.mjs` | 可组合原子 |
 
-CLI(`scripts/perch.mjs`)在 Domain 之上,只做 subcommand 路由,**不含业务语义**。
+CLI(`scripts/perch.mjs`)在 Domain 之上 ~30 行,只做 subcommand 路由 + 默认值填充。
 
-不要把业务语义倒回 Adapter 层(Fetch 不排序、不做时间窗、不识别 pinned)。
+不要把业务语义倒回 Adapter 层。
+
+## 调度由外部完成
+
+v3 框架**不做调度**。报告节奏由外部 cron / openclaw / agent 决定:
+
+```bash
+0 8  * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt morning
+0 13 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt noon
+0 19 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt evening
+```
+
+凌晨补跑、跨日回顾、周报 —— 都是 cron 命令的事,不是框架的事。
 
 ## 新建 / 配置 topic
 
-优先用 `node scripts/perch.mjs admin create --from-json <spec>`(有校验、幂等)。`spec.slots` 可省略 → fallback `DEFAULT_SLOTS`。详细字段 / 常见坑见 `docs/TOPIC_AUTHORING.md`。
+优先用 `node scripts/perch.mjs admin create --from-json <spec>`(有校验、幂等)。`spec.prompts` 数组列出要生成的 prompt 名;省略时默认 `["default"]`。详细字段 / 常见坑见 `docs/TOPIC_AUTHORING.md`。
 
-## Analyze / Digest 语义
+## Report 语义
 
-- **wrap 统一规则**:触发时 hour < 对应 slot 的 `start_hour` → `date` 回退到昨天(`now` 凌晨 / 显式 slot 在该 slot 今天起点前触发都走这条)。`date`、raw、wiki 一起回退
-- **endLabel**:归属日=昨天 → canonical end;归属日=今天 → `min(now, canonical)`。同时杜绝反向窗口和未来窗口
-- prompt 模板**不要硬编码小时数**,用 `{WINDOW_*}` 占位符
-- **wiki 写入**:当日 wiki 是 1 份共享文件,slot 粒度走 `## slot: <name>` section 幂等 upsert。Claude 必须用 `{WIKI_WRITE_CMD}` heredoc pipe 写,**不要**用 Write 工具直接覆盖 `{WIKI_PATH}`(会抹掉其他 slot 的 section)
-- **summaries 写入**(digest 独立产出):同理走 `{SUMMARY_WRITE_CMD}` heredoc pipe,不要 Write 直接覆盖 `{SUMMARIES_PATH}`
+- **--prompt <name>** 对应 `templates/topics/<slug>/<name>.md`,文件名(去 `.md`)就是 prompt 标识
+- **--section <name>** 缺省 = `--prompt`,决定 wiki 写到哪段
+- **--inputs <paths>** 缺省 = today raw 单文件;支持 comma-separated 多文件 / shell 展开 glob 后的 comma-join
+- **--date YYYY-MM-DD** 缺省 = today(topic.timezone),决定 `{DATE}` 占位符 + wiki 写到哪天
+- prompt 模板里时间过滤靠**模板自己写**(引用 `{DATE}` + 硬编码小时数,如"只看 {DATE} 12:00 之后")
+- **wiki 写入**:走 `{WIKI_WRITE_CMD}` heredoc pipe,**不要**用 Write 工具直接覆盖 `{WIKI_PATH}`(会破坏其他 section)
+- **summaries 写入**(evening 类双产出):走 `{SUMMARY_WRITE_CMD}` heredoc pipe,同理不要 Write 直接写
 
-## v2 状态
+## v3 状态
 
-主链路全部实现:`perch ingest / analyze / digest / enrich / archive / admin`。Topic 升为一等对象。仓库内置示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §9。
+主链路全部实现:`perch ingest / report / enrich / archive / admin`。slot / window / 凌晨 wrap / canonical end / 独立 digest method 全部消失。仓库内置示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §8。
 
-v2 明确不做:LLM Direct 模式(留接口)、schedule 自动驱动、Topic Wiki stale/rebuild、跨 topic 查询、summaries 月度切分归档、per-topic timezone、外链深抓。
+v3 明确不做:LLM Direct 模式(留接口)、Schedule 自动驱动、Topic Wiki stale/rebuild、跨 topic 查询、summaries 月度切分归档、per-topic timezone、外链深抓。

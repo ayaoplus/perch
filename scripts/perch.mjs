@@ -1,23 +1,12 @@
 #!/usr/bin/env node
-// perch.mjs — Perch v2 主 CLI(单入口,subcommand 路由到 Topic methods)
+// perch.mjs — Perch v3 主 CLI(单入口,subcommand 路由到 Topic methods)
 //
-// 设计意图:CLI 是 Topic.method 的薄 dispatcher,不含业务语义。所有领域逻辑都在
-// lib/{ingest,analyze,digest,enrich,archive,admin}.mjs。这里只做:
-//   - 解析 subcommand 和 flags
-//   - 加载 Topic
-//   - 调对应 method
-//   - 把结果或错误格式化输出
-//
-// Subcommands:
-//   ingest  --topic <slug> [--dry] [--limit N]
-//   analyze --topic <slug> [--slot <name>|now] [--date YYYY-MM-DD]
-//   digest  --topic <slug> [--date YYYY-MM-DD]
-//   enrich  --topic <slug> --url <status_url> [--date YYYY-MM-DD]
-//   archive --topic <slug> [--dry-run]
-//   admin   list
-//   admin   create [--from-json <spec.json>]
-//
-// `--topic` 缺省 → config.json 的 default_topic。
+// v3 形态:
+//   ingest    抓 X → dedup → 全局重排 → 写 raw(默认 today raw,可 --out)
+//   report    渲染 prompt → (skill 模式)Claude 接棒(取代 v2 analyze + digest)
+//   enrich    深抓 Twitter Article → 月度缓存
+//   archive   月度归档
+//   admin     Topic 配置 CRUD(list / create)
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +22,10 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 // —— CLI 解析 ——
 
-const VALUE_FLAGS = new Set(['--topic', '--slot', '--date', '--url', '--limit', '--from-json', '--month']);
+const VALUE_FLAGS = new Set([
+  '--topic', '--prompt', '--inputs', '--date', '--section',
+  '--url', '--limit', '--from-json', '--out',
+]);
 
 function parseArgs(args) {
   const flags = {};
@@ -66,8 +58,7 @@ if (flags.help || flags.h || !subcommand) {
 try {
   switch (subcommand) {
     case 'ingest':   await cmdIngest();   break;
-    case 'analyze':  await cmdAnalyze();  break;
-    case 'digest':   await cmdDigest();   break;
+    case 'report':   await cmdReport();   break;
     case 'enrich':   await cmdEnrich();   break;
     case 'archive':  await cmdArchive();  break;
     case 'admin':    await cmdAdmin();    break;
@@ -77,7 +68,6 @@ try {
       process.exit(1);
   }
 } catch (e) {
-  // lib 模块的错误已自带 "<role>: ..." 上下文,这里只输出 message,避免重复前缀
   err(e.message);
   if (process.env.PERCH_DEBUG) err(e.stack || '');
   process.exit(1);
@@ -88,7 +78,11 @@ try {
 async function cmdIngest() {
   const topic = await Topic.load(flags.topic || null, rootDir);
   const limit = flags.limit != null ? Number(flags.limit) : undefined;
-  const result = await topic.ingest({ dry: !!flags.dry, limit });
+  const result = await topic.ingest({
+    out: flags.out,
+    dry: !!flags.dry,
+    limit,
+  });
   if (result.allSourcesFailed) {
     err('all sources failed to fetch');
     process.exit(2);
@@ -97,6 +91,7 @@ async function cmdIngest() {
     process.stdout.write(JSON.stringify({
       topic: result.topic,
       date: result.date,
+      rawPath: result.rawPath,
       fetched: result.fetched,
       afterDedup: result.afterDedup,
       new: result.new,
@@ -105,22 +100,20 @@ async function cmdIngest() {
   }
 }
 
-async function cmdAnalyze() {
+async function cmdReport() {
+  if (!flags.prompt) {
+    err('report: --prompt <name> is required');
+    process.exit(1);
+  }
   const topic = await Topic.load(flags.topic || null, rootDir);
-  const slotArg = flags.slot || 'now';
-  await topic.analyze(slotArg, {
+  const inputs = flags.inputs ? splitInputs(flags.inputs) : undefined;
+  await topic.report(flags.prompt, {
+    inputs,
     date: flags.date || undefined,
+    section: flags.section || undefined,
     llm: 'skill',
   });
-  // analyze 在 skill 模式下已经把 prompt 打到 stdout,这里无需额外输出
-}
-
-async function cmdDigest() {
-  const topic = await Topic.load(flags.topic || null, rootDir);
-  await topic.digest({
-    date: flags.date || undefined,
-    llm: 'skill',
-  });
+  // skill 模式下 prompt 已被 stdout,无需额外输出
 }
 
 async function cmdEnrich() {
@@ -180,10 +173,11 @@ async function runAdminCreateInteractive() {
   const rl = readline.createInterface({ input, output });
 
   try {
-    process.stdout.write(`\nPerch — 新 Topic 向导\n\n`);
+    process.stdout.write(`\nPerch v3 — 新 Topic 向导\n\n`);
     process.stdout.write(`将要创建:\n`);
-    process.stdout.write(`  1) templates/topics/<slug>/SCHEMA.md + <slot>.md\n`);
-    process.stdout.write(`  2) config.json 里注册新 topic\n`);
+    process.stdout.write(`  1) templates/topics/<slug>/SCHEMA.md\n`);
+    process.stdout.write(`  2) templates/topics/<slug>/<prompt>.md(每个 prompt 一份)\n`);
+    process.stdout.write(`  3) config.json 里注册新 topic\n`);
     process.stdout.write(`按 Ctrl-C 可随时中止(未写入任何文件)。\n\n`);
 
     const configPath = path.join(rootDir, 'config.json');
@@ -230,60 +224,32 @@ async function runAdminCreateInteractive() {
       process.exit(1);
     }
 
-    process.stdout.write('\n-- 时段槽位(slots)--\n');
-    process.stdout.write('  [1] 默认 3 槽(morning@5 / noon@12 / evening@18)\n');
-    process.stdout.write('  [2] 默认 4 槽(early@6 / morning@10 / afternoon@14 / evening@19)\n');
-    process.stdout.write('  [3] 自定义\n');
+    process.stdout.write('\n-- Prompt 模板 --\n');
+    process.stdout.write('  [1] 默认 1 份(default)\n');
+    process.stdout.write('  [2] 早午晚 3 份(morning / noon / evening)\n');
+    process.stdout.write('  [3] 自定义(逗号分隔,如 "morning,evening,weekly")\n');
     const choice = await askValidated(rl, '选择(1/2/3):',
       v => ['1', '2', '3'].includes(v) ? null : '请输入 1、2 或 3');
 
-    let slots;
+    let prompts;
     if (choice === '1') {
-      slots = [
-        { name: 'morning', start_hour: 5, window: 'today' },
-        { name: 'noon', start_hour: 12, window: 'today' },
-        { name: 'evening', start_hour: 18, window: 'today' },
-      ];
+      prompts = ['default'];
     } else if (choice === '2') {
-      slots = [
-        { name: 'early', start_hour: 6, window: 'today' },
-        { name: 'morning', start_hour: 10, window: 'today' },
-        { name: 'afternoon', start_hour: 14, window: 'today' },
-        { name: 'evening', start_hour: 19, window: 'today' },
-      ];
+      prompts = ['morning', 'noon', 'evening'];
     } else {
-      slots = [];
-      while (true) {
-        const more = slots.length === 0
-          ? 'y'
-          : (await rl.question(`已 ${slots.length} 个 slot,继续?(y/N):`)).trim().toLowerCase();
-        if (more !== 'y') break;
-        const name = await askValidated(rl, '  slot name(不得为 "now"):', v => {
-          if (!/^[a-z][a-z0-9-]*$/.test(v)) return '必须匹配 ^[a-z][a-z0-9-]*$';
-          if (v === 'now') return '"now" 是保留字';
-          if (slots.some(s => s.name === v)) return `已有同名: ${v}`;
+      const raw = await askValidated(rl, '  prompt 名字(逗号分隔,每个匹配 ^[a-z][a-z0-9-]*$):',
+        v => {
+          const arr = v.split(',').map(s => s.trim()).filter(Boolean);
+          if (arr.length === 0) return '至少一个';
+          for (const n of arr) {
+            if (!/^[a-z][a-z0-9-]*$/.test(n)) return `"${n}" 不合法`;
+          }
           return null;
         });
-        const h = await askValidated(rl, '  start_hour(0-23):', v => {
-          const n = Number(v);
-          if (!Number.isInteger(n) || n < 0 || n > 23) return '必须 0-23';
-          if (slots.some(s => s.start_hour === n)) return `已有同 start_hour`;
-          return null;
-        });
-        const win = await askValidated(rl, '  window(today / since_prev,默认 today):', v => {
-          const x = v || 'today';
-          return ['today', 'since_prev'].includes(x) ? null : '只接受 today 或 since_prev';
-        });
-        slots.push({ name, start_hour: Number(h), window: win || 'today' });
-      }
-      if (slots.length === 0) {
-        process.stdout.write('!! 至少需要一个 slot\n');
-        process.exit(1);
-      }
+      prompts = raw.split(',').map(s => s.trim()).filter(Boolean);
     }
-    slots.sort((a, b) => a.start_hour - b.start_hour);
 
-    const spec = { topic: slug, description, dataPath, sources, slots };
+    const spec = { topic: slug, description, dataPath, sources, prompts };
     process.stdout.write('\n将生成的配置(preview):\n');
     process.stdout.write(JSON.stringify(spec, null, 2) + '\n');
     const go = (await rl.question('\n确认写入?(y/N):')).trim().toLowerCase();
@@ -310,42 +276,53 @@ async function askValidated(rl, question, validate) {
   }
 }
 
+function splitInputs(s) {
+  return String(s).split(',').map(p => p.trim()).filter(Boolean);
+}
+
 function printNextSteps(slug) {
   process.stdout.write(`\n下一步:\n`);
-  process.stdout.write(`  1) 编辑 templates/topics/${slug}/<slot>.md,把占位问题换成真问题\n`);
+  process.stdout.write(`  1) 编辑 templates/topics/${slug}/<prompt>.md,把占位问题换成真问题\n`);
   process.stdout.write(`  2) 确认用户日常 Chrome 已开 --remote-debugging-port=9222 并登录 X\n`);
   process.stdout.write(`  3) Dry:    node scripts/perch.mjs ingest --topic ${slug} --dry\n`);
   process.stdout.write(`  4) 正式:  node scripts/perch.mjs ingest --topic ${slug}\n`);
-  process.stdout.write(`  5) 报告:  node scripts/perch.mjs analyze --topic ${slug}\n`);
-  process.stdout.write(`  6) 概览:  node scripts/perch.mjs digest --topic ${slug}\n`);
+  process.stdout.write(`  5) 报告:  node scripts/perch.mjs report --topic ${slug} --prompt <name>\n`);
   process.stdout.write(`字段/架构详解见 docs/TOPIC_AUTHORING.md。\n\n`);
 }
 
 function printHelp() {
   process.stdout.write(`
-Perch v2 — 多 Topic 个人信息漏斗
+Perch v3 — 多 Topic 个人信息漏斗(调度由外部决定)
 
 用法:
   node scripts/perch.mjs <subcommand> [flags]
 
 Subcommands(对应 Topic methods):
-  ingest    抓 X → 跨源去重 → 全局时间重排 → 写当日 raw
-  analyze   渲染 slot prompt → (skill 模式)Claude 接棒生成 wiki section
-  digest    渲染 digest prompt → Claude 接棒生成日概览 → prepend summaries.md
+  ingest    抓 X → 跨源去重 → 全局时间重排 → 写 raw(默认 today raw)
+  report    渲染 prompt → (skill 模式)Claude 接棒生成 wiki section / summary
   enrich    深抓单条 Twitter Article → 月度缓存
   archive   月度归档:非当月 raw / wiki / cache → archive/YYYY-MM/
   admin     Topic 配置 CRUD(list / create)
 
 常用例:
-  node scripts/perch.mjs ingest --topic ai-radar [--dry] [--limit 80]
-  node scripts/perch.mjs analyze --topic ai-radar [--slot evening|now] [--date YYYY-MM-DD]
-  node scripts/perch.mjs digest --topic ai-radar [--date YYYY-MM-DD]
+  node scripts/perch.mjs ingest --topic ai-radar [--out path] [--dry] [--limit 80]
+  node scripts/perch.mjs report --topic ai-radar --prompt morning
+  node scripts/perch.mjs report --topic ai-radar --prompt evening --date 2026-04-23
+  node scripts/perch.mjs report --topic ai-radar --prompt weekly --inputs "raw/daily/2026-04-{20..26}.md"
   node scripts/perch.mjs enrich --topic ai-radar --url <status_url>
   node scripts/perch.mjs archive --topic ai-radar [--dry-run]
   node scripts/perch.mjs admin list
   node scripts/perch.mjs admin create [--from-json spec.json]
 
+调度由外部 cron / openclaw / agent 完成。典型 cron:
+  0 8  * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt morning
+  0 13 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt noon
+  0 19 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt evening
+
 --topic 缺省 → config.json 的 default_topic
+--inputs 缺省 → today raw 单文件
+--date   缺省 → today(topic.timezone)
+--section 缺省 → = --prompt
 完整设计见 docs/DESIGN.md。
 `);
 }
