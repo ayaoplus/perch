@@ -52,7 +52,7 @@ const subcommand = positional[0] || null;
 
 if (flags.help || flags.h || !subcommand) {
   printHelp();
-  process.exit(subcommand ? 0 : 1);
+  process.exit(0);
 }
 
 try {
