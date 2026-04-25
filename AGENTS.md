@@ -6,16 +6,17 @@ Perch 是一个**多 Topic 的互联网数据处理框架**。Topic 是配置容
 
 完整设计先看 `docs/DESIGN.md`。快速入口见 `README.md`。两者比本文件优先级更高。
 
-## 当前仓库状态(v3)
+## 当前仓库状态(v3.1)
 
 5 个角色,Topic 配置容器:
 
 - `lib/topic.mjs` — Topic class(static load/list/create + 5 个实例方法)
 - `lib/{ingest,report,enrich,archive,admin}.mjs` — 角色实现
+- `lib/llm.mjs` — **v3.1 新增**:Direct 模式 agent loop + Anthropic Messages API + read_file/bash tools + stub provider
 - `lib/{normalize,wiki,article-cache}.mjs` — Tool 层
 - `lib/{x-fetcher,x-adapter,*cdp*}.mjs` — Adapter 层
-- `scripts/perch.mjs` — 主 CLI(单入口,subcommand: ingest / report / enrich / archive / admin)
-- `scripts/{wiki-write,summary-write,fetch-article}.mjs` — Agent tools(prompt 内 Claude Bash 调用)
+- `scripts/perch.mjs` — 主 CLI(单入口,subcommand: ingest / report / enrich / archive / admin;`--llm` 选 skill/direct)
+- `scripts/{wiki-write,summary-write,fetch-article}.mjs` — Agent tools(被 Skill 模式的 Claude 或 Direct 模式的 LLM bash tool 调用,行为同构)
 - `templates/topics/<slug>/` — 每个 topic 的 SCHEMA.md + 任意多份 `<name>.md` prompt
 - `config.example.json` 是占位模板,`config.json`(本地、gitignore)指定 default_topic / timezone / 各 topic 的 path 和 templates_dir
 
@@ -45,10 +46,27 @@ Agent 如需新建 topic,**首选 `node scripts/perch.mjs admin create --from-js
 - **`--section <name>`** 缺省 = `--prompt`,决定 wiki section 名
 - **`--inputs <paths>`** 缺省 = today raw 单文件;comma-separated 支持多文件
 - **`--date YYYY-MM-DD`** 缺省 = today,决定 `{DATE}` + wiki 写哪天
+- **`--llm skill|direct`** 缺省 = skill;Direct 模式需要 `ANTHROPIC_API_KEY` env(适合 cron / openclaw)
 - **凌晨补跑昨天** = cron 命令显式传 `--date $(date -d yesterday +%F)` 和 `--inputs <昨天 raw>`,框架不做自动 wrap
 - **prompt 模板里时间过滤**:模板自己写,如 noon 模板里硬编码 "只看 {DATE} 12:00 之后"
 - **wiki 写入必须走 `{WIKI_WRITE_CMD}` heredoc pipe**,不能 Write 工具直接覆盖 `{WIKI_PATH}` —— 当日 wiki 是共享文件,直接覆盖会抹掉其他 section
 - **summaries 写入**(evening 类双产出):走 `{SUMMARY_WRITE_CMD}` heredoc pipe
+
+## LLM 模式(v3.1)
+
+| 模式 | 触发 | 适用场景 |
+|---|---|---|
+| Skill(默认) | Claude Code 会话内,`--llm skill` 或缺省 | 手动跑、调 prompt、debug |
+| Direct | `--llm direct` 或 `PERCH_LLM_MODE=direct` env | cron / openclaw / 无会话 runner |
+
+Direct 模式 env(全部可选,除 API key):
+- `ANTHROPIC_API_KEY`(必需)
+- `PERCH_LLM_MODEL`(默认 `claude-sonnet-4-5`)
+- `PERCH_LLM_MAX_TOKENS`(默认 16384)
+- `PERCH_LLM_DEBUG=1`(API request/response 简要)
+- `PERCH_LLM_PROVIDER=stub`(测试用,跳过真实 API)
+
+两种模式 prompt 模板**完全共享**。Direct 模式的 agent loop 给 LLM 暴露 `read_file` / `bash` 工具,行为同构 Claude Code 会话。
 
 ## 工作原则
 

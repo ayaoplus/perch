@@ -13,7 +13,7 @@
 | 角色 | 命令 | 说明 |
 |---|---|---|
 | **Ingest** | `perch ingest` | 真实登录态 Chrome + CDP 读 X redux store → 跨源去重 → 全局倒序写当日 raw |
-| **Report** | `perch report --prompt <name>` | 通用 prompt runner:渲染 prompt → Claude 会话接棒生成 wiki section / summary |
+| **Report** | `perch report --prompt <name> [--llm skill\|direct]` | 通用 prompt runner;Skill 模式 Claude 会话接棒,Direct 模式直连 Anthropic API + tool loop |
 | **Enrich** | `perch enrich --url <url>` | CDP 深抓 Twitter Article → 按月缓存 |
 | **Archive** | `perch archive` | 月末把上月 raw / wiki / cache 搬到 `archive/YYYY-MM/`,幂等,支持 `--dry-run` |
 | **Admin** | `perch admin list / create` | Topic 配置 CRUD;`create --from-json` 非交互 |
@@ -123,23 +123,37 @@ node scripts/perch.mjs admin create --from-json spec.json
 - `--date` 缺省 → today(topic.timezone)
 - `--section` 缺省 → 与 `--prompt` 同名
 
-### 调度典型形态(cron)
+### 调度典型形态(cron + Direct 模式)
+
+cron 不在 Claude Code 会话里,需要 **Direct 模式**(脚本直连 Anthropic API 跑 LLM):
 
 ```bash
-0 8  * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt morning
-0 13 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt noon
-0 19 * * *  perch ingest --topic ai-radar && perch report --topic ai-radar --prompt evening   # 双产出
+# /etc/cron.d/perch (示例)
+ANTHROPIC_API_KEY=sk-ant-...
+PERCH_LLM_MODE=direct
+
+0 8  * * *  cd /path/to/perch && node scripts/perch.mjs ingest --topic ai-radar && node scripts/perch.mjs report --topic ai-radar --prompt morning
+0 13 * * *  cd /path/to/perch && node scripts/perch.mjs ingest --topic ai-radar && node scripts/perch.mjs report --topic ai-radar --prompt noon
+0 19 * * *  cd /path/to/perch && node scripts/perch.mjs ingest --topic ai-radar && node scripts/perch.mjs report --topic ai-radar --prompt evening
 ```
 
 凌晨补跑昨天:
 
 ```bash
-0 3 * * * perch report --topic ai-radar --prompt evening \
+0 3 * * *  cd /path/to/perch && node scripts/perch.mjs report --topic ai-radar --prompt evening \
     --date $(date -d yesterday +%F) \
     --inputs raw/daily/$(date -d yesterday +%F).md
 ```
 
-shell 一行,框架不做特殊处理。
+shell 时间运算 + 文件路径自己拼,框架不做特殊处理。
+
+在 Claude Code 会话里手动跑则用 **Skill 模式**(默认,不需要 env 也不需要 API key):
+
+```bash
+node scripts/perch.mjs report --topic ai-radar --prompt morning
+```
+
+Skill 模式打 prompt 到 stdout,当前 Claude 会话接棒生成。
 
 ---
 
@@ -169,9 +183,14 @@ v3 主链路全部实现:Topic 配置容器 + 5 个角色 method + 通用 prompt
 - Topic 脚手架(交互 / `--from-json`,都有 spec 校验;`prompts` 可省略 → `default`)
 - **slot / window / 凌晨 wrap / canonical end / 独立 digest method 全部消失**
 
+v3.1 新增:
+
+- **LLM Direct 模式**(`lib/llm.mjs::runPromptWithTools`):脚本直连 Anthropic Messages API + agent loop(read_file / bash tools),让 cron / openclaw / 任意无 Claude Code 会话的 runner 都能驱动 report
+- 两种模式(Skill / Direct)共享同一份 prompt 模板,行为同构
+- Provider 抽象支持 stub(测试用)和 anthropic(默认)
+
 未来会加的能力(详见 DESIGN §8):
 
-- LLM Direct 模式(脚本直连 Anthropic API,接口已留)
 - Topic Wiki 的 stale / rebuild
 - 跨 topic 查询
 - per-topic timezone、summaries 月度切分归档

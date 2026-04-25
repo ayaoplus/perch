@@ -24,7 +24,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const VALUE_FLAGS = new Set([
   '--topic', '--prompt', '--inputs', '--date', '--section',
-  '--url', '--limit', '--from-json', '--out',
+  '--url', '--limit', '--from-json', '--out', '--llm',
 ]);
 
 function parseArgs(args) {
@@ -107,13 +107,22 @@ async function cmdReport() {
   }
   const topic = await Topic.load(flags.topic || null, rootDir);
   const inputs = flags.inputs ? splitInputs(flags.inputs) : undefined;
+
+  // --llm 优先 → env PERCH_LLM_MODE → 默认 'skill'
+  const llmMode = (flags.llm || process.env.PERCH_LLM_MODE || 'skill').toLowerCase();
+  if (!['skill', 'direct'].includes(llmMode)) {
+    err(`report: --llm must be 'skill' or 'direct', got: ${llmMode}`);
+    process.exit(1);
+  }
+
   await topic.report(flags.prompt, {
     inputs,
     date: flags.date || undefined,
     section: flags.section || undefined,
-    llm: 'skill',
+    llm: llmMode,
+    debug: !!process.env.PERCH_LLM_DEBUG,
   });
-  // skill 模式下 prompt 已被 stdout,无需额外输出
+  // skill 模式 prompt 走 stdout;direct 模式 LLM 完成后 lib/llm.mjs 已打日志到 stderr
 }
 
 async function cmdEnrich() {
@@ -323,6 +332,13 @@ Subcommands(对应 Topic methods):
 --inputs 缺省 → today raw 单文件
 --date   缺省 → today(topic.timezone)
 --section 缺省 → = --prompt
+--llm    缺省 → 'skill'(env PERCH_LLM_MODE 可覆盖);'direct' 模式需 ANTHROPIC_API_KEY
+
+LLM Direct 模式(脱离 Claude Code 会话,适合 cron / openclaw):
+  ANTHROPIC_API_KEY=sk-ant-... \\
+    perch report --topic ai-radar --prompt evening --llm direct
+  环境变量:PERCH_LLM_MODEL(默认 claude-sonnet-4-5)/ PERCH_LLM_MAX_TOKENS / PERCH_LLM_DEBUG
+
 完整设计见 docs/DESIGN.md。
 `);
 }

@@ -76,6 +76,29 @@ v3 框架**不做调度**。报告节奏由外部 cron / openclaw / agent 决定
 
 ## v3 状态
 
-主链路全部实现:`perch ingest / report / enrich / archive / admin`。slot / window / 凌晨 wrap / canonical end / 独立 digest method 全部消失。仓库内置示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §8。
+主链路全部实现:`perch ingest / report / enrich / archive / admin`。slot / window / 凌晨 wrap / canonical end / 独立 digest method 全部消失。
 
-v3 明确不做:LLM Direct 模式(留接口)、Schedule 自动驱动、Topic Wiki stale/rebuild、跨 topic 查询、summaries 月度切分归档、per-topic timezone、外链深抓。
+**v3.1 新增 LLM Direct 模式**:`lib/llm.mjs::runPromptWithTools` 直连 Anthropic Messages API + agent loop(read_file / bash tools),让 cron / openclaw / 任意无 Claude Code 会话的 runner 都能驱动 report。两种模式(Skill / Direct)共享同一份 prompt 模板,行为同构。
+
+仓库内置示例 topic(`ai-radar`),SCHEMA 里的 X list ID 是占位符。详见 `docs/DESIGN.md` §8。
+
+v3 明确不做:Schedule 自动驱动(Direct 模式 + cron 已覆盖)、Topic Wiki stale/rebuild、跨 topic 查询、summaries 月度切分归档、per-topic timezone、外链深抓。
+
+## LLM Direct 模式(v3.1)
+
+cron / openclaw 跑 report:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+PERCH_LLM_MODE=direct
+node scripts/perch.mjs report --topic ai-radar --prompt evening
+```
+
+env:
+- `ANTHROPIC_API_KEY`(必需)
+- `PERCH_LLM_MODEL`(默认 `claude-sonnet-4-5`)
+- `PERCH_LLM_MAX_TOKENS`(默认 16384)
+- `PERCH_LLM_DEBUG=1`(打印 API request/response 简要)
+- `PERCH_LLM_PROVIDER=stub`(测试用,跳过真实 API)
+
+Direct 模式的 bash tool cwd 锁到仓库根 + 10 分钟 timeout + 200KB 输出上限。**Prompt injection 风险来自 X 推文内容**,首版不做命令白名单 —— 容器隔离 / 沙箱由 cron / openclaw 层负责。
