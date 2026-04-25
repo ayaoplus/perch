@@ -1,38 +1,54 @@
 # Perch
 
-> 多 Topic 个人信息漏斗 · 互联网数据处理框架
+> 多 Topic 个人信息漏斗 · 互联网数据处理框架(v2)
 
-每个 Topic 是一组 **sources + LLM 工作流** 的配置包:从 X(List / 用户时间线)采集原始推文,清洗归一化,按时段产出 Daily Wiki,按月归档。换领域 = 换一份 Topic 配置,不改框架代码。
+每个 Topic 是一等对象,封装 **sources + 时段配置 + 报告模板** 的完整配置包。所有领域操作都是 `topic.<method>()`,按"信息生命周期"切六个角色:Ingest / Analyze / Digest / Enrich / Archive / Admin。换领域 = 换一份 Topic 配置,框架代码不动。
 
-完整设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。创建 topic 的详细指南(给人和 agent)见 [`docs/TOPIC_AUTHORING.md`](docs/TOPIC_AUTHORING.md)。
+完整设计见 [`docs/DESIGN.md`](docs/DESIGN.md)。创建 topic 的详细指南见 [`docs/TOPIC_AUTHORING.md`](docs/TOPIC_AUTHORING.md)。
 
 ---
 
 ## 核心能力
 
-| 能力 | 入口 | 说明 |
+| 角色 | 命令 | 说明 |
 |---|---|---|
-| **采集** | `scripts/collect.mjs` | 真实登录态 Chrome + CDP 读 X redux store → 跨源去重 + repost 聚合 → 按时间倒序写入当日 raw |
-| **报告** | `scripts/report.mjs` | 时段 prompt 模板化(slot 数量/边界/覆盖窗口 topic 级自定义),由 Claude 会话接棒生成 Daily Wiki |
-| **Wiki 写入** | `scripts/wiki-write.mjs` | Claude 在 report 阶段生成完 markdown 后 Bash 调用,对当日 wiki 做 `## slot: <name>` 段幂等 upsert |
-| **按需深抓** | `scripts/fetch-article.mjs` | Claude 在 report 阶段需要 Twitter Article 全文时 Bash 调用,CDP 抓取 + 按月缓存 |
-| **归档** | `scripts/rotate.mjs` | 每月把非当月的 raw / wiki / article cache 搬到 `archive/YYYY-MM/`,幂等,支持 `--dry-run` |
-| **新 topic 脚手架** | `scripts/new-topic.mjs` | 交互向导或 `--from-json` 非交互,一步生成 SCHEMA + 每 slot 的 prompt 骨架 + config 注册 |
+| **Ingest** | `perch ingest` | 真实登录态 Chrome + CDP 读 X redux store → 跨源去重 → 全局时间倒序写当日 raw |
+| **Analyze** | `perch analyze` | 渲染 slot prompt → Claude 会话接棒生成当日 wiki 的 slot section |
+| **Digest** | `perch digest` | 渲染 digest prompt → Claude 接棒蒸馏 5-7 句日概览 → prepend 到 summaries.md |
+| **Enrich** | `perch enrich` | CDP 深抓 Twitter Article → 按月缓存(可由 analyze 阶段 Claude 按需触发) |
+| **Archive** | `perch archive` | 月末把上月 raw / wiki / cache 搬到 `archive/YYYY-MM/`,幂等,支持 `--dry-run` |
+| **Admin** | `perch admin list / create` | Topic 配置 CRUD;`create --from-json` 非交互,`create` 走交互向导 |
 
 ---
 
 ## 架构速览
 
-三层,业务语义只在 Business 层(详见 DESIGN §2.1):
+两个正交维度,详见 DESIGN §2:
+
+### 角色维度(信息生命周期)
 
 ```
-Fetch  (lib/x-fetcher.mjs · lib/x-adapter.mjs)
-    ↓  读 X redux store(长推全文 / repost / metrics 自带,无 DOM 爬虫)
-Business (scripts/collect.mjs · report.mjs · rotate.mjs · fetch-article.mjs · new-topic.mjs · wiki-write.mjs)
-    ↓  编排:跨源合并 · ID 去重 + repost 聚合 · 时间排序 · 窗口计算 · 按需深抓 · Topic 脚手架 · Wiki section upsert
-Tool  (lib/normalize.mjs · topic.mjs · wiki.mjs · article-cache.mjs · rotate.mjs)
-       formatTweet · dedupTweets · loadTopic · articleCachePath · upsertWikiSlotSection · ...
+Ingest  →  Analyze  →  (Digest / Archive)
+              ↑
+            Enrich
+              ↑
+            Admin
 ```
+
+新需求是给 Topic 加 method,不是新增"命令"。
+
+### 实现层维度
+
+```
+Adapter (lib/x-fetcher · x-adapter · CDP 栈)
+   ↓  和外部世界打交道:读 X redux store / LLM API
+Domain  (lib/topic.mjs Topic class + 6 个角色模块)
+   ↓  领域逻辑:接收 Topic 实例完成生命周期一步
+Tool    (lib/normalize · wiki · article-cache)
+        可组合原子:format / dedup / 路径 / idempotent upsert
+```
+
+`scripts/perch.mjs` 在 Domain 之上,30 行的 subcommand router,**不含业务语义**。
 
 ---
 
@@ -40,12 +56,20 @@ Tool  (lib/normalize.mjs · topic.mjs · wiki.mjs · article-cache.mjs · rotate
 
 ```
 perch/
-├── config.example.json         # 提交到 git 的占位模板;clone 后 cp 成 config.json 再改路径
-├── config.json                 # 本地运行时配置(已 gitignore):default_topic / timezone / 各 topic 的 path+templates_dir
-├── lib/                        # 运行时代码(Fetch + Tool 层)
-├── scripts/                    # Business 层入口(collect / report / rotate / fetch-article / new-topic / wiki-write + spike)
-├── sources/ · processors/      # 插件化占位(v1 还没用到)
-├── templates/topics/<slug>/    # 每个 topic 的 SCHEMA.md + 时段 prompt
+├── config.example.json         # 提交到 git 的占位模板
+├── config.json                 # 本地运行时配置(已 gitignore)
+├── lib/
+│   ├── topic.mjs               # Topic class(static load/list/create + 实例方法)
+│   ├── ingest.mjs / analyze.mjs / digest.mjs / enrich.mjs / archive.mjs / admin.mjs
+│   ├── normalize.mjs / wiki.mjs / article-cache.mjs       # Tool 层
+│   └── x-fetcher.mjs / x-adapter.mjs / *cdp-proxy*        # Adapter 层
+├── scripts/
+│   ├── perch.mjs               # 主 CLI(单入口,subcommand 路由)
+│   ├── wiki-write.mjs          # Agent tool: slot section pipe upsert
+│   ├── summary-write.mjs       # Agent tool: summary 条目 pipe upsert(v2 新增)
+│   ├── fetch-article.mjs       # Agent tool: prompt 内按需深抓
+│   └── spike-list.mjs / spike-profile.mjs   # 调试 gate
+├── templates/topics/<slug>/    # 每个 topic 的 SCHEMA.md + 时段 prompt + (可选)digest.md
 └── docs/DESIGN.md              # 完整设计规范
 ```
 
@@ -57,8 +81,8 @@ Topic **数据**(raw / wiki / summaries / archive)住在 `config.json` 指定的
 
 - Node.js ≥ 22(原生 fetch + WebSocket)
 - 用户日常 Chrome 已开 `--remote-debugging-port=9222`(或 9229 / 9333),并登录 X
-- 首次 clone 后:`cp config.example.json config.json`,再按实际情况改里面的数据目录 `path`(`config.json` 已被 gitignore,不会误入仓库)
-- 对应的 `templates/topics/<slug>/SCHEMA.md` 存在且 frontmatter 合法(示例 topic `ai-radar` 的 X list ID 是占位符,记得替换成自己的)
+- 首次 clone 后:`cp config.example.json config.json`,改里面的数据目录 `path`
+- 对应的 `templates/topics/<slug>/SCHEMA.md` 存在且 frontmatter 合法(示例 topic `ai-radar` 的 X list ID 是占位符,记得替换)
 
 没起 CDP Proxy 子进程时,`lib/browser-provider.mjs` 会自动 fork 一个,日志在 `/tmp/perch-proxy.log`。
 
@@ -67,48 +91,66 @@ Topic **数据**(raw / wiki / summaries / archive)住在 `config.json` 指定的
 ## 常用命令
 
 ```bash
-# 采集(自动化)
-node scripts/collect.mjs --topic ai-radar                # 正式跑,写入当日 raw(全局按时间重排,非前插)
-node scripts/collect.mjs --topic ai-radar --dry          # 看统计和前 3 条样本,不写盘
-node scripts/collect.mjs --topic ai-radar --limit 20     # 临时覆盖所有 source 的 fetch_limit
+# Ingest:抓 X
+node scripts/perch.mjs ingest --topic ai-radar
+node scripts/perch.mjs ingest --topic ai-radar --dry
+node scripts/perch.mjs ingest --topic ai-radar --limit 20
 
-# 报告(Skill 模式:脚本打印完整 prompt,当前 Claude 会话接棒生成,通过 wiki-write 管道 upsert 到当日 wiki)
-node scripts/report.mjs now --topic ai-radar             # 推荐:自动选 slot + 凌晨 wrap 到昨天 + window 自动算
-node scripts/report.mjs morning --topic ai-radar         # 显式指定(end 用 canonical,不受当前时刻影响)
+# Analyze:出某个 slot 的报告(skill 模式:打印 prompt,Claude 接棒生成 + pipe wiki-write)
+node scripts/perch.mjs analyze --topic ai-radar              # slot 默认 'now',时区 / wrap / window 自动算
+node scripts/perch.mjs analyze --topic ai-radar --slot evening
+node scripts/perch.mjs analyze --topic ai-radar --slot evening --date 2026-04-23  # 显式归属日
 
-# 按需深抓 Twitter Article(Claude 在 report 阶段需要时 Bash 调用)
-node scripts/fetch-article.mjs https://x.com/author/status/NNN --topic ai-radar
+# Digest:出当日概览(独立 method,v2 新增)
+node scripts/perch.mjs digest --topic ai-radar
+node scripts/perch.mjs digest --topic ai-radar --date 2026-04-23
 
-# 月度归档(月末手跑,建议先 dry-run)
-node scripts/rotate.mjs --topic ai-radar --dry-run
-node scripts/rotate.mjs --topic ai-radar
+# Enrich:深抓 Twitter Article(CLI 形式;analyze prompt 里也会让 Claude 按需 Bash 调 fetch-article.mjs)
+node scripts/perch.mjs enrich --topic ai-radar --url https://x.com/author/status/NNN
 
-# 新建一个 topic
-node scripts/new-topic.mjs                               # 交互向导
-node scripts/new-topic.mjs --from-json spec.json         # 非交互,agent 友好(slots 可省略 → DEFAULT_SLOTS)
-node scripts/new-topic.mjs --help
+# Archive:月末归档
+node scripts/perch.mjs archive --topic ai-radar --dry-run
+node scripts/perch.mjs archive --topic ai-radar
+
+# Admin
+node scripts/perch.mjs admin list
+node scripts/perch.mjs admin create                          # 交互向导
+node scripts/perch.mjs admin create --from-json spec.json    # 非交互,agent 友好
 ```
 
-**`report now` 的关键行为**(agent 必读):凌晨(hour < `slots[0].start_hour`)触发时,slot 自动映射到**昨天的最后一个 slot**,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 同步指向昨天;`{WINDOW_END_LABEL}` 用归属日 `23:59`(看昨天整天)。详见 [`docs/TOPIC_AUTHORING.md §3.4`](docs/TOPIC_AUTHORING.md)。
+**`analyze --slot now` 的关键行为**(agent 必读):凌晨(hour < `slots[0].start_hour`)触发时,slot 自动映射到**昨天的最后一个 slot**,`{DATE}` / `{RAW_PATH}` / `{WIKI_PATH}` 同步指向昨天;`{WINDOW_END_LABEL}` 用归属日 `23:59`(看昨天整天)。详见 [`docs/TOPIC_AUTHORING.md`](docs/TOPIC_AUTHORING.md)。
+
+---
+
+## v1 → v2 命令对照
+
+| v1 | v2 |
+|---|---|
+| `node scripts/collect.mjs` | `node scripts/perch.mjs ingest` |
+| `node scripts/report.mjs <slot>` | `node scripts/perch.mjs analyze --slot <slot>` |
+| `node scripts/rotate.mjs` | `node scripts/perch.mjs archive` |
+| `node scripts/fetch-article.mjs <url>` | `node scripts/perch.mjs enrich --url <url>` (脚本仍存在作为 prompt 内 agent tool) |
+| `node scripts/new-topic.mjs` | `node scripts/perch.mjs admin create` |
+| (evening prompt 附带产出) | `node scripts/perch.mjs digest`(**独立 method**) |
 
 ---
 
 ## 状态
 
-v1 已实现 collect / report / rotate / fetch-article / new-topic / wiki-write 六条主链路:
+v2 主链路全部实现:Topic class + 6 个角色 method + 统一 CLI:
 
-- Fetch 层读 X redux store(长推全文、repost 链、metrics 自带)+ dedup 聚合(纯 RT 合并、quote 完整保留)
-- Slot 数量 / 边界 / 覆盖窗口全部 topic 级可配(`SCHEMA.slots`);`report now` 自带日期回退 + wrap;显式 slot 用 canonical end
+- Adapter 层读 X redux store(长推全文、repost 链、metrics 自带)+ dedup 聚合
+- Slot 数量 / 边界 / 覆盖窗口全部 topic 级可配(`SCHEMA.slots`);analyze `now` 自带日期回退 + wrap;显式 slot 用 canonical end
 - Raw 每次写盘**全局时间重排**(非前插),吸收 pinned / source 晚到的旧推
-- **Wiki 当日 1 份文件**,slot 粒度走 `## slot: <name>` section 幂等 upsert(Claude 生成 + `wiki-write.mjs` 持久化,各司其职)
-- Twitter Article 按需深抓 + 按月缓存 + 随 rotate 归档
-- 新 topic 脚手架(交互 / `--from-json`,都有 spec 校验;`slots` 可省略自动 fallback `DEFAULT_SLOTS`)
-- 仓库内置一个示例 topic:`ai-radar`(AI 博主选题漏斗),`templates/topics/ai-radar/SCHEMA.md` 里的 X list ID 是占位符,需替换成你自己的
+- **Wiki 当日 1 份文件**,slot 粒度走 `## slot: <name>` section 幂等 upsert
+- **Digest 独立 method**(v2 新增):当日概览不再绑在 evening prompt 里,改由 `perch digest` 显式触发,prompt 复用通用模板(可选 `templates/topics/<slug>/digest.md` 覆盖)
+- Twitter Article 按需深抓 + 按月缓存 + 随 archive 归档
+- Topic 脚手架(交互 / `--from-json`,都有 spec 校验;`slots` 可省略自动 fallback `DEFAULT_SLOTS`)
 
-未来会加的能力(详见 DESIGN §7 / §8):
+未来会加的能力(详见 DESIGN §9):
 
+- LLM Direct 模式(脚本直连 Anthropic API,接口已留)
+- Schedule 自动驱动(SCHEMA `schedule` 字段位置已留)
 - Topic Wiki 的 stale / rebuild
 - 跨 topic 查询
-- Processor 插件化(多形态产出)
-- `report` 的 cron 化 / 直连 API(当前走 Claude Code Skill 模式)
 - per-topic timezone、summaries 月度切分归档

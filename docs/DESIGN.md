@@ -1,4 +1,4 @@
-# Perch — 设计规范
+# Perch — 设计规范(v2)
 
 > 多 Topic 个人信息漏斗 · 互联网数据处理框架
 
@@ -6,338 +6,411 @@
 
 ## 1. 项目定位
 
-**一句话**:多 Topic 的个人信息漏斗。每个 Topic = 一组数据源 + 一套 LLM 工作流(采集 → 清洗 → 摘要 → 分析报告),本地 Markdown 落地,可扩展。
+**一句话**:多 Topic 的个人信息漏斗。每个 Topic = 一组数据源 + 一套信息加工流水线(采集 → 归纳 → 概览 → 归档),本地 Markdown 落地,可扩展。
 
-**核心价值(护城河)**:
+**核心价值**:
 
 1. **X 能抓**(登录态真实 Chrome + CDP 瘦核,不靠官方 API)
-2. **LLM 工作流**(时段报告 / 选题分析 / 主题蒸馏)
-
-这两件事组合起来,市面上没有现成工具能替代。
+2. **结构化的 LLM 工作流**(时段分析 / 日概览 / 主题蒸馏)
 
 **明确不做**:
 
-- 不做 RSS(市面有 miniflux/NetNewsWire,别重造轮子)
+- 不做 RSS(已有 miniflux/NetNewsWire)
 - 不做长期归档知识库(perch 是"信息漏斗",不是 wiki 本身)
 - 不做通用平台抓取(只做 X,专注登录态 + 时段报告这对组合)
 
 ---
 
-## 2. 核心架构
+## 2. 架构总览
+
+### 2.1 设计哲学:Topic 一等公民 + 信息生命周期
+
+v2 的核心抽象是把 **Topic 升为一等对象**,所有领域操作都是 Topic 的方法。CLI 退化成"读 args → 取 Topic → 调 method"的薄 dispatcher,**不含业务语义**。
+
+按"信息生命周期"切角色,而不是按动词切。任何信息漏斗系统的稳定骨架都是:
 
 ```
-[Source 插件]     [中间层固定]         [Processor 插件]
-     ↓                 ↓                      ↓
-  X List          Raw 格式              Daily Wiki
-  X 用户时间线     summaries.md          Topic Wiki
-                  月度 rotate            Distill / Visual Card / ...
-                  Frontmatter 规范       (未来扩展)
-                  stale / rebuild
+Ingest  →  Analyze  →  (Digest / Archive)
+                ↑
+            Enrich
+                ↑
+              Admin
 ```
 
-**设计哲学**:中间固定,两头可扩展。
+| 角色 | 输入 | 产出 | LLM 介入 | Topic method |
+|---|---|---|---|---|
+| **Ingest** | sources | 当日 raw | 否 | `topic.ingest()` |
+| **Analyze** | raw + slot 窗口 | 当日 wiki 的 slot section | **是** | `topic.analyze(slot, opts?)` |
+| **Digest** | 当日 wiki | summaries.md 的 `## DATE` 条目 | **是** | `topic.digest(opts?)` |
+| **Enrich** | tweet status URL | article 缓存 | 否 | `topic.enrich(url, opts?)` |
+| **Archive** | 月度 | archive/YYYY-MM/ | 否 | `topic.archive(opts?)` |
+| **Admin** | spec | config + templates | 否 | `Topic.create(rootDir, spec)` / `Topic.list(rootDir)` |
 
-- **中间固定**(所有 Topic 共用):raw 格式、summaries 规范、frontmatter、归档生命周期、rotate 脚本
-- **两头扩展**:Source 端平行加新数据源,Processor 端平行加新产出形态
+新增能力(比如周报、跨 topic 查询)只是给 Topic 加一个 method,不必新增"命令" — 角色清单是收敛的。
 
-### 2.1 运行时分层:Fetch / Business / Tool
+### 2.2 运行时分层:Adapter / Domain / Tool
 
-除了上述"插件化"维度,代码内部还按三层组织职责,**业务语义(pinned、时间窗、跨次去重)只落在 Business 层**:
+正交于角色切分的**实现层**(各角色复用):
 
 | 层 | 位置 | 做什么 | **不**做什么 |
 |---|---|---|---|
-| **Fetch** | `lib/x-fetcher.mjs` · `lib/x-adapter.mjs` | 打开 X 页面后从其内部 redux store 直接读 timeline(`state.urt.<timelineKey>` + `state.entities.tweets/users`),原样输出每条 tweet(含长推全文 + `socialContext` repost 信息) | 不排序、不做时间窗过滤、不识别 pinned、不爬 DOM |
-| **Business** | `scripts/collect.mjs` · `scripts/report.mjs` · `scripts/rotate.mjs` · `scripts/fetch-article.mjs` · `scripts/new-topic.mjs` · `scripts/wiki-write.mjs` | 编排业务流:generous limit + 跨次去重 + **existing+new block 全局时间重排**(非前插) · slot 映射 + 日期回退 + 窗口计算 · 月度归档 · 按需 article 深抓 · topic 脚手架 · wiki section 级幂等 upsert | 不直接碰 CDP / 页面 DOM |
-| **Tool** | `lib/normalize.mjs` · `lib/topic.mjs` · `lib/wiki.mjs` · `lib/rotate.mjs` · `lib/article-cache.mjs` | 可组合原子:`formatTweet` / `dedupTweets`(聚合 `__via` + `repostedBy`)/ `sortTweetsByTime` / `readExistingIds` / `splitRawBlocks` + `mergeBlocksByTimeDesc`(raw 全局重排)/ `loadTopic` + `DEFAULT_SLOTS` / 路径辅助 / `upsertWikiSlotSection`(wiki 当日文件的 `## slot: <name>` 段幂等 upsert)/ article 缓存读写 | 不做业务流编排 |
+| **Adapter** | `lib/x-fetcher.mjs` · `lib/x-adapter.mjs` · `lib/llm.mjs`(后续) | 和外部世界打交道:从 X redux store 读 timeline · 调 LLM API · CDP 控制浏览器 | 不掺业务语义 |
+| **Domain** | `lib/topic.mjs`(Topic class)· `lib/ingest.mjs` · `lib/analyze.mjs` · `lib/digest.mjs` · `lib/enrich.mjs` · `lib/archive.mjs` · `lib/admin.mjs` | 角色实现:每个角色一份模块,接收 Topic 实例,完成生命周期一步 | 不直接碰 CDP / 不知道 CLI 形态 |
+| **Tool** | `lib/normalize.mjs` · `lib/wiki.mjs` · `lib/article-cache.mjs` | 可组合原子:格式化、路径辅助、idempotent 读写 | 不做编排 |
 
-**为什么这么分**:实证例子是 profile 页面的 pinned tweet。`fetchXProfile(.., {limit:5})` 顶部可能是钉着的老推文,"顺序错"只是表象,**本质是 pinned 挤占一个位置导致最老应收推文漏采**。如果修法是"在 Fetch 层默认按时间排 + 过滤 pinned",就把业务语义污染到底层 API,将来"想保留 pinned"或"想要原序"的场景就得反向 opt-out。反过来保持 Fetch 干净,业务层按场景自行组合,扩展性和可测试性都更好。
+CLI(`scripts/perch.mjs`)在 Domain 之上 30 行,只做 subcommand 路由。Agent tools(`scripts/wiki-write.mjs` · `scripts/summary-write.mjs` · `scripts/fetch-article.mjs`)是 LLM 在 analyze/digest 阶段 Bash 调用的"持久化副作用"工具,等同于 Topic method 的对外接口子集。
 
-**为什么走 redux store 而不是 DOM**:X 的 SPA 进入 list/profile 页面时先通过内部 GraphQL(如 `ListLatestTweetsTimeline` / `UserTweets`)一次性拿回 80+ 条数据塞进 redux,虚拟列表只 mount 其中可见的 7-10 条到 DOM。以 DOM 为数据源等于强行把"完整数据"从"只渲染一屏"的 UI 里反推回来,要跟 IntersectionObserver 懒加载、Chrome tab throttle、React unmount 轮转斗,既不完整也不稳定(实测 limit=80 往往只拿 4-40 条)。直接读 redux store 拿到的是 X 自己已经解出的 API response,含长推全文(`note_tweet` 已合并进 `full_text`)、repost 链(`retweeted_status` / `user`)、精确 metrics、views,全都 idempotent,不受 tab 焦点 / 虚拟列表影响。2-pass stabilize、hydrate truncated、DOM selector 漂移这些原本 Fetch 层的"兜底 robustness"一锅全免。
+### 2.3 LLM 调用模式(Skill / Direct)
 
-**真实业务场景(collect 管线)**:
+LLM 介入只发生在两个角色:**Analyze** 和 **Digest**。两种调用模式:
+
+- **Skill 模式(v1 + v2 默认)**:`topic.analyze(slot)` 渲染完 prompt 后输出到 stdout,**当前 Claude 会话**接棒读 prompt → 读 raw → 生成 markdown → 用 `wiki-write.mjs` heredoc pipe 落盘。Digest 同理 + `summary-write.mjs`。
+- **Direct 模式(v2.x 留位)**:`lib/llm.mjs` 提供 `complete(prompt) → completion` 抽象,后续可接 Anthropic API 让 cron / openclaw / 任何 runner 直接驱动。当前未实现,接口已预留。
+
+二者共享同一份 prompt 模板和同一份 Topic method 实现。模式只决定"谁来跑 LLM 那一步",其他不变。
+
+### 2.4 真实业务管线(以 ingest 为例)
 
 ```
-fetchXList/Profile(generous limit,例如 80~200)          # 每个 source 独立拉
-  → (Fetch 内) 读 X redux store 的 timeline + 实体          # 自带长推全文 + repost + metrics,单次取
-  → normalize.dedupTweets                                 # 跨 source 合并 + 聚合 __via / repostedBy
-  → readExistingIds 对比当日 raw 文件,过滤已存在          # 跨次去重
-  → formatTweet 渲染每条新 tweet 为 block 字符串
-  → splitRawBlocks 拆旧文件;mergeBlocksByTimeDesc 合并新+旧   # **全局**按 MM-DD HH:MM 倒序重排
-  → 整体重写 raw 文件(保持"全局时间倒序"不变量)
+fetchXList/Profile (generous limit)
+  → 读 X redux store(长推全文 + repost + metrics 自带)
+  → normalize.dedupTweets         (跨 source 合并 + 聚合 __via / repostedBy)
+  → readExistingIds 跨次去重
+  → formatTweet 渲染每条 → block 字符串
+  → splitRawBlocks + mergeBlocksByTimeDesc(全局时间倒序重排)
+  → 整体重写 raw 文件
 ```
 
-预期跑频 3~4 次/天(多 topic 可并行排期,见 §3.1)。**不需要显式"时间窗 / lastRunTime"状态** — ID 去重(`readExistingIds` + `dedupTweets`)已完全覆盖去重需求,`fetch_limit` 的 generous 取值自然限定了"只看最近一批"。generous limit 的真正作用是**给 pinned / 当日高频账号留余量**,让下游 ID 去重兜底而不是让 limit 卡边界。
+**关键不变量**:raw 文件全局时间倒序。每次 ingest **整体重排**而非前插 — 当某 source 这一轮才抓到旧 tweet(pinned 挤占、source 晚一轮、DOM 抖动),全局重排能放到正确位置。
 
-**为什么是"整体重写"而不是"前插新 block"**:当某个 source 这一轮才抓到一条较旧的 tweet(pinned 挤占、list 成员刚把旧推文顶上来、不同 source 晚一轮才出现),简单前插会让它出现在文件最顶部,破坏"全局时间倒序"这一消费侧依赖的不变量。整体按 `MM-DD HH:MM` 重排的开销对单日 raw(典型几百条 block、<200KB)可忽略,而稳定性收益明显。collect 运行时也提供 `--limit N` CLI 覆盖所有 source 的 `fetch_limit`,用于手动 smoke-test 或 rate-sensitive 场景。
+**为什么读 redux store 而不是 DOM**:X SPA 进入 list/profile 页时通过内部 GraphQL 一次性拿 80+ 条塞进 redux,虚拟列表只 mount 7-10 条到 DOM。读 DOM 等于跟 IntersectionObserver / tab throttle / React unmount 斗,既不完整也不稳定。读 redux 直接拿 X 自己解出的 API response,含长推全文、repost 链、精确 metrics、views,全 idempotent。
 
 ---
 
-## 3. 核心概念
+## 3. Topic 一等公民
 
-### 3.1 Topic(一等公民)
+### 3.1 Topic class
 
-一个 Topic = 一组 **source + 时段槽位(slots) + 清洗规则 + 报告模板 + 摘要 prompt** 的配置包。
+`lib/topic.mjs` 暴露一个 Topic class:
 
-**"换领域"= 换整个配置包**,不是换一个 URL 那么简单。这是 day 1 就要锁定的抽象。
+```js
+export class Topic {
+  // —— 静态:加载 / 列举 / 创建 ——
+  static async load(slug, rootDir)         // 替代 v1 loadTopic;返回 Topic 实例
+  static async list(rootDir)               // 列出 config.json 里所有 topic
+  static async create(rootDir, spec)       // 替代 v1 scaffoldTopic
+  
+  // —— 实例字段(运行时配置) ——
+  slug · description · timezone · dataPath · templatesDir · sources · slots
+  
+  // —— 实例方法(领域操作) ——
+  async ingest(opts)                       // opts: { dry, limit }
+  async analyze(slotArg, opts)             // slotArg: name | 'now'; opts: { date, llm }
+  async digest(opts)                       // opts: { date, llm }
+  async enrich(statusUrl, opts)            // opts: { date }
+  async archive(opts)                      // opts: { dryRun }
+}
+```
 
-每个 Topic 独立目录、独立生命周期、独立归档。
+调用者(CLI / agent / cron / runner)只和 Topic 对象打交道,不知道目录结构、不懂窗口语义、不解析 schedule。**这些是 Topic 内部的细节**。
 
-**时段槽位(slots)是 Topic 级配置**:在 SCHEMA.md 的 frontmatter 里用 `slots: [{name, start_hour, window}]` 定义。不同 Topic 可以有不同数量、不同边界、不同报告窗口的时段(如新闻类早高峰 4 槽 today、市场类晚高峰 3 槽 since_prev)。缺省时 fallback 到 `morning@5 / noon@12 / evening@18 / window=today` 保持向后兼容。每个 slot name 对应同目录的 `<name>.md` 模板文件。
+### 3.2 SCHEMA.md(随 perch 仓库版本化)
 
-**Slot 的 window 字段**(默认 `today`)决定该 slot 报告的时间覆盖:
+```jsonc
+{
+  "topic": "ai-radar",
+  "description": "AI 博主每日选题漏斗",
+  "sources": [
+    { "slug": "ai-kol", "type": "list", "target": "https://x.com/i/lists/...", "fetch_limit": 80 }
+  ],
+  "slots": [
+    { "name": "morning", "start_hour": 5,  "window": "since_prev" },
+    { "name": "noon",    "start_hour": 12, "window": "since_prev" },
+    { "name": "evening", "start_hour": 18, "window": "today" }
+  ]
+  // schedule 字段在 v2.x 引入,声明 ingest / analyze / digest / archive 的触发节奏,
+  // 让 orchestrator 退化成"读 schedule 调 method"的通用 runner。v2 第一版不引入。
+}
+```
 
-- `today` — 从今日 00:00 到 endLabel,累积视角(适合"今天讨论最多的 X"这类统计型问题)
-- `since_prev` — 从上一 slot 的 start_hour 到 endLabel,增量视角(适合"这段时间新出什么"类问题);首个 slot 自动 fallback 为 today,避免跨昨日 raw 的复杂度
+`slots` 缺省时 fallback 到 DEFAULT_SLOTS(`morning@5 / noon@12 / evening@18 / window=today`)。
 
-window 不影响 raw 物理结构(仍是一日一文件),只通过 `{WINDOW_*}` 占位符注入到 prompt,让 Claude 自行按 `MM-DD HH:MM` 时间戳过滤 block。
+### 3.3 Slot + 归属日(沿用 v1 语义)
 
-**slot 映射 + 日期回退**(`report.mjs` 的 `resolveSlotAndDate`,`now` 和显式指定共用一条路径):
+`topic.analyze(slotArg, opts)` 内部把 slotArg 解析成 `{ slot, date }`:
 
-| slotArg | 触发时刻条件(hour 在 topic.timezone) | 映射 slot | 归属日期 `date` |
+| slotArg | 触发时刻条件(hour 在 topic.timezone) | 映射 slot | 归属 date |
 |---|---|---|---|
-| `now` | hour ≥ `slots[0].start_hour` | `pickSlot(hour)` | **今天** |
-| `now` | hour < `slots[0].start_hour` | **最后一个 slot**(凌晨 wrap) | **昨天** |
-| `<显式>` | hour ≥ `slotDef.start_hour` | 显式 slot | **今天**(该 slot 进行中 / 已过) |
-| `<显式>` | hour < `slotDef.start_hour` | 显式 slot | **昨天**(今天实例还没开始,看昨天那个) |
+| `now` | hour ≥ slots[0].start_hour | pickSlot(hour) | 今天 |
+| `now` | hour < slots[0].start_hour | 最后一个 slot(凌晨 wrap) | 昨天 |
+| `<显式>` | hour ≥ slotDef.start_hour | 显式 slot | 今天 |
+| `<显式>` | hour < slotDef.start_hour | 显式 slot | 昨天 |
 
-**关键不变量**:`date`、`rawDailyPath(date)`、`wikiDailyPath(date)`、窗口起止都由这个统一的 `date` 决定,**不会出现 date 不一致的错位组合**。wiki 当日一份,slot 粒度走 `## slot: <name>` section upsert(见 §3.2)。
-
-**endLabel 语义**(`computeWindow` 里两种模式统一):
+window 计算同 v1:
 
 | 归属日 | endLabel |
 |---|---|
-| 昨天(wrap / 显式回退) | **canonical end**:下一 slot 的 `start_hour:00`,最后一个 slot 用归属日 `23:59` |
-| 今天 | **`min(now, canonical end)`**:slot 进行中取 `now`(到触发时刻),slot 已过取 canonical(不越界到下一 slot) |
+| 昨天 | canonical end(下一 slot 的 start_hour:00,末 slot 用归属日 23:59) |
+| 今天 | min(now, canonical end) |
 
-**两个同时杜绝的 bug**:
-- **反向窗口**(start > end):显式 `report noon` 在凌晨 01:07 曾算出 `05:00 → 01:07`。现 date 回退到昨天,end=昨天 canonical,start<end ✓
-- **未来窗口**(end > now 且数据还没发生):`report morning` 在 00:xx 曾算出今天 `00:00 → 12:00` 全未来。现 date 回退到昨天,端点都落在昨天内 ✓
+两个杜绝的 bug(反向窗口 / 未来窗口)沿用 v1 解。
 
-**Topic 脚手架**:`scripts/new-topic.mjs` 提供两种创建方式:交互向导(人用)和 `--from-json`(agent 用)。后者还暴露了 `scaffoldTopic` / `validateTopicSpec` / `renderSchemaMd` / `renderSlotPrompt` 四个可 import 的纯函数。`spec.slots` 省略时会 fallback 到 `DEFAULT_SLOTS`(从 `lib/topic.mjs` 导出的单一 source of truth),与运行时 `loadTopic` 的 fallback 行为对齐。详见 `docs/TOPIC_AUTHORING.md`。
+### 3.4 Daily Wiki / Topic Wiki / Summaries
 
-### 3.2 两种 Wiki
-
-| 类型 | 路径 | 触发方式 | 特征 |
+| 类型 | 路径 | 由谁写 | 特征 |
 |---|---|---|---|
-| **Daily Wiki** | `wiki/daily/YYYY-MM-DD.md` | 时段自动(morning/noon/evening 等) | 当日单份,按 `## slot: <name>` 分段,start_hour 升序排列;slot 级幂等 upsert(同 slot 重跑替换自己那段);用完归档 |
-| **Topic Wiki** | `wiki/topic/{topic-slug}.md` | 按需,跨日期累积 | 带 frontmatter,可 stale → rebuild |
+| **Daily Wiki** | `wiki/daily/YYYY-MM-DD.md` | `topic.analyze` | 当日单份,按 `## slot: <name>` 分段;同 slot 重跑幂等替换 |
+| **Topic Wiki** | `wiki/topic/<slug>.md` | (v2 不实现) | 跨日累积,带 frontmatter 可 stale → rebuild |
+| **Summaries** | `summaries.md` | `topic.digest` | `## YYYY-MM-DD` 条目,时间倒序 prepend,日级幂等 upsert |
 
-Daily 为主,Topic 为辅(看需要才建)。两者都是独立能力,框架层都支持。
+**重要变化(v1 → v2)**:在 v1 里 summaries 条目是 evening prompt 的"附加任务"附带产出。v2 把它**独立成 digest method + 独立 prompt 模板**。Analyze 只生成 wiki section,不再附带 summaries。用户日终 → 跑 `perch analyze evening` 后再跑 `perch digest`(或将来由 schedule 自动 chain)。
 
-Daily wiki 的写入不走 Claude 直接 Write,而是 Claude 生成自己那段 markdown 后 Bash 管道给 `scripts/wiki-write.mjs` 做 section 级 upsert(`lib/wiki.mjs::upsertWikiSlotSection`)。设计收益:Claude 只负责生成内容,文件结构(section 锚点 / 排序 / 幂等)由脚本 deterministic 保证,避免让 LLM 复刻其他 slot 的 section 这种易错任务。
-
-### 3.3 月度切分(精简哲学)
-
-**原则**:永远不维护大数据库。按时间切,只管当月。
+### 3.5 月度切分
 
 - 活跃库 = 只当月
-- 每月 1 号 rotate 上月 `raw/daily` + `wiki/daily` + `cache/articles/上月/` 到 `archive/YYYY-MM/`
-- **Topic Wiki 不归档**(长期资产,跨月保留)
-- **summaries.md 当前不归档**(v1 简化,按月切分较复杂,留 v2)
-- 跨月查询:归档视为只读库(按需读 `archive/YYYY-MM/`,不重建索引)
-
-**为什么不是"当月+上月"**:双月窗口在月初会膨胀到近 60 天,波动大、无必要。单月最干净。
-
-**为什么 article cache 按月切(而不是扁平按 statusId)**:按月切让 rotate 能无脑整目录 rename,生命周期与 raw/wiki 严格对齐。代价:同一篇 article 跨月被引用会重抓一次。article 不是高频重复项,重抓成本可控。若数据表明同一文章跨月重复是高频,再升级为扁平 + 全局扫描。
+- 每月 1 号 `topic.archive()` 上月 `raw/daily` + `wiki/daily` + `cache/articles/上月/` 到 `archive/YYYY-MM/`
+- Topic Wiki 不归档(长期资产,跨月保留)
+- summaries.md 当前不归档(留 v2.x)
+- 跨月查询:归档视为只读库
 
 ---
 
 ## 4. 目录结构
 
-### 4.1 Skill 本体(代码 + 插件)
+### 4.1 perch 仓库
 
 ```
-~/.claude/skills/perch/
-├── SKILL.md
-├── README.md                   # 面向人的快速入门
-├── CLAUDE.md                   # 项目协作规则
-├── AGENTS.md                   # 自动化 agent 速览
-├── config.example.json         # 提交到 git 的占位模板;clone 后 cp 成 config.json 再改路径
-├── config.json                 # 本地运行时配置(gitignore):默认 topic、归档策略、timezone、各 topic 的 path / templates_dir
-├── lib/                        # Fetch + Tool 层
-│   ├── browser-provider.mjs    # Chrome + CDP Proxy 生命周期(user / managed 双模式)
-│   ├── cdp-proxy.mjs           # HTTP-over-CDP bridge,独立子进程
-│   ├── proxy-client.mjs        # CDP Proxy 的 HTTP 客户端(newTab/eval/click/...)
-│   ├── _utils.mjs              # adapter 共享小工具(sleep / downloadFile)
-│   ├── x-adapter.mjs           # X list/profile 从 redux store 读取;status/longform 走 DOM(单推详情页)
-│   ├── x-fetcher.mjs           # CDP 栈生命周期 + adapter 调用,对外暴露 fetchXList / fetchXProfile
-│   ├── normalize.mjs           # tweet 对象 → raw markdown block + 去重 / 排序 / 聚合
-│   ├── topic.mjs               # Topic 配置加载(读 config.json + SCHEMA.md frontmatter)
-│   ├── wiki.mjs                # Wiki / summaries 路径与写入辅助(summaries 日条目 + wiki 当日文件的 slot section 幂等 upsert)
-│   ├── article-cache.mjs       # Twitter Article 按月缓存的路径 + 读写原子
-│   └── rotate.mjs              # 月度归档工具(含 article cache)
-├── scripts/                    # Business 层入口 + review gate spike
-│   ├── collect.mjs             # /perch collect 入口
-│   ├── report.mjs              # /perch report 入口(Skill 模式,打印完整 prompt 给 Claude)
-│   ├── rotate.mjs              # /perch rotate 入口
-│   ├── fetch-article.mjs       # 按需深抓 Twitter Article(Claude 会话里 Bash 调用)
-│   ├── new-topic.mjs           # 新 topic 脚手架(交互向导 + --from-json)
-│   ├── wiki-write.mjs          # Wiki section 级幂等 upsert(Claude 生成 slot 内容后 Bash heredoc pipe 调用)
-│   ├── spike-list.mjs          # list 抓取 review gate
-│   └── spike-profile.mjs       # profile 抓取 review gate
-├── sources/                    # 采集插件(可扩展端之一,v1 占位)
-│   ├── x-list.md
-│   └── x-user.md
-├── processors/                 # 产出插件(可扩展端之二,v1 占位)
-│   ├── report.md
-│   ├── visual-card.md
-│   └── distill.md
-├── templates/topics/<slug>/    # 每个 topic 的逻辑配置(随 perch 仓库版本化)
-│   ├── SCHEMA.md               # JSON frontmatter 定义 sources + slots;正文是人读说明
-│   ├── morning.md              # 每个 slot.name 一份同名 prompt 模板
-│   ├── noon.md                 # (默认三槽示例;slot 数量/名字由 SCHEMA.slots 决定)
-│   └── evening.md
+perch/
+├── README.md · SKILL.md · CLAUDE.md · AGENTS.md
+├── config.example.json
+├── config.json                 # gitignore;default_topic / timezone / topics 注册表
+├── lib/
+│   ├── topic.mjs               # Topic class(static load/list/create + 实例方法分发)
+│   ├── ingest.mjs              # Ingest 实现
+│   ├── analyze.mjs             # Analyze 实现(prompt 渲染 + slot/window 解析)
+│   ├── digest.mjs              # Digest 实现
+│   ├── enrich.mjs              # Enrich 实现(article 深抓的 thin wrapper)
+│   ├── archive.mjs             # Archive 实现(月度归档,合并自 v1 lib/rotate.mjs)
+│   ├── admin.mjs               # Admin 实现(scaffoldTopic + 校验)
+│   ├── llm.mjs                 # LLM 调用抽象(v2 第一版只有 'skill' 模式;direct 模式留位)
+│   ├── normalize.mjs           # Tool: tweet → block / dedup / sort / 时间重排
+│   ├── wiki.mjs                # Tool: 路径辅助 + slot section / summary 条目 idempotent upsert
+│   ├── article-cache.mjs       # Tool: 按月 article 缓存
+│   ├── x-fetcher.mjs · x-adapter.mjs    # Adapter: X 数据
+│   ├── browser-provider.mjs · cdp-proxy.mjs · proxy-client.mjs · _utils.mjs
+├── scripts/
+│   ├── perch.mjs               # 主 CLI(单入口,subcommand 路由)
+│   ├── wiki-write.mjs          # Agent tool: slot section pipe upsert
+│   ├── summary-write.mjs       # Agent tool: summary 条目 pipe upsert(v2 新增)
+│   ├── fetch-article.mjs       # Agent tool: 按需深抓 Twitter Article
+│   ├── spike-list.mjs · spike-profile.mjs   # 调试 gate
+├── templates/topics/<slug>/
+│   ├── SCHEMA.md               # JSON frontmatter:sources + slots + (v2.x) schedule
+│   ├── <slot>.md               # 每个 slot 的 analyze prompt(纯报告,不再附带 digest)
+│   └── digest.md               # (可选)digest prompt;缺省走通用默认 prompt
 └── docs/
-    ├── DESIGN.md               # 本文件
-    └── TOPIC_AUTHORING.md      # 人 / agent 创建 topic 的详细指南
+    ├── DESIGN.md (本文件)
+    └── TOPIC_AUTHORING.md
 ```
 
-### 4.2 Topic 数据目录(纯运行时产物)
+### 4.2 Topic 数据目录
 
 ```
-<topic-path>/                   # 由 config.json 的 topics.<slug>.path 指定
-├── raw/
-│   └── daily/YYYY-MM-DD.md     # 当月原始采集
-├── summaries.md                # 当月日概览(按 `## YYYY-MM-DD` 时间倒序追加,evening report 维护)
+<topic-path>/
+├── raw/daily/YYYY-MM-DD.md       # 当月原始采集
+├── summaries.md                  # 当月日概览(digest 维护)
 ├── wiki/
-│   ├── daily/YYYY-MM-DD.md     # 当日所有 slot 合并成 1 份,按 `## slot: <name>` 分段,start_hour 升序
-│   └── topic/                  # 主题 wiki(带 frontmatter)
-├── cache/
-│   └── articles/YYYY-MM/       # 按月累积的 Twitter Article 深抓缓存
-│       └── <statusId>.md       #   frontmatter(title/author/fetched_at/...) + markdown 正文
-└── archive/
-    └── YYYY-MM/                # 上月归档:raw/daily + wiki/daily + cache/articles/
+│   ├── daily/YYYY-MM-DD.md       # 当日所有 slot 合并,按 ## slot: <name> 分段
+│   └── topic/                    # 主题 wiki(v2 不实现)
+├── cache/articles/YYYY-MM/       # 按月累积的 article 深抓缓存
+└── archive/YYYY-MM/              # 上月归档:raw + wiki + cache
 ```
 
-**说明**:
-- Topic 数据目录**只装运行时产物**(raw / wiki / summaries / cache / archive),不入 git。路径由 config.json 指定,可以放在 iCloud / Obsidian 等同步盘
-- Topic 的**逻辑配置**(SCHEMA、prompt 模板)不在这里,而是在 §4.1 的 `templates/topics/<slug>/` 下,随 perch 仓库版本化。**分离的理由**:逻辑配置要 review / diff / 回滚,数据不需要;让数据目录保持纯粹也便于 rotate 归档
-- `cache/articles/` 由 `scripts/fetch-article.mjs` 按需写入(Claude 在 report 阶段判断需要正文时 Bash 调用),同月内按 statusId 复用,月末 rotate 跟 raw/wiki 一起搬走
+数据目录由 config.json 的 `topics.<slug>.path` 指定,通常放 iCloud / Obsidian 同步盘。**只装运行时产物,不入 git**。
 
 ---
 
-## 5. Raw 格式
+## 5. CLI 形态
 
-每个 Topic 的 `raw/daily/YYYY-MM-DD.md` 是当日所有 source 合并的事实原始库。核心约定:
+单入口 `scripts/perch.mjs`,subcommand 一一对应 Topic method:
+
+```bash
+# Ingest:抓 X
+node scripts/perch.mjs ingest --topic ai-radar [--dry] [--limit N]
+
+# Analyze:出某 slot 的报告
+node scripts/perch.mjs analyze --topic ai-radar [--slot <name>|now] [--date YYYY-MM-DD]
+
+# Digest:出当日概览(prepend 到 summaries.md)
+node scripts/perch.mjs digest --topic ai-radar [--date YYYY-MM-DD]
+
+# Enrich:深抓 article
+node scripts/perch.mjs enrich --topic ai-radar --url <status_url> [--date YYYY-MM-DD]
+
+# Archive:月度归档
+node scripts/perch.mjs archive --topic ai-radar [--dry-run]
+
+# Admin
+node scripts/perch.mjs admin list
+node scripts/perch.mjs admin create --from-json <spec.json>
+node scripts/perch.mjs admin create     # 交互向导
+```
+
+`--topic` 缺省 = `config.json` 的 `default_topic`。
+
+**v1 命令对照**:
+
+| v1 | v2 | 备注 |
+|---|---|---|
+| `node scripts/collect.mjs` | `perch ingest` | 行为等价 |
+| `node scripts/report.mjs <slot>` | `perch analyze --slot <slot>` | prompt 不再附带 digest |
+| `node scripts/rotate.mjs` | `perch archive` | 行为等价 |
+| `node scripts/fetch-article.mjs <url>` | `perch enrich --url <url>` | (脚本仍存在,作为 prompt 内 agent tool) |
+| `node scripts/new-topic.mjs --from-json` | `perch admin create --from-json` | 行为等价 |
+| (无 — evening prompt 附带) | `perch digest` | 独立 method |
+| `node scripts/wiki-write.mjs` | (保留)agent tool | prompt 内调用 |
+
+### 5.1 Skill 模式下的 analyze / digest 流程
+
+```
+用户跑 `perch analyze --topic ai-radar --slot evening`
+  ↓
+perch.mjs → Topic.load → topic.analyze('evening', {})
+  ↓
+lib/analyze.mjs 解析 slot+date+window → 渲染 prompt → process.stdout.write(prompt)
+  ↓
+当前 Claude 会话接棒(skill 模式约定)
+  ↓
+Claude:Read raw → 生成 wiki markdown
+  ↓
+Claude: Bash heredoc pipe 给 scripts/wiki-write.mjs --topic ... --slot evening
+  ↓
+wiki-write.mjs 调用 lib/wiki.mjs::upsertWikiSlotSection,幂等写盘
+```
+
+Digest 同构,只是模板不同 + 写到 summaries.md(`scripts/summary-write.mjs` + `lib/wiki.mjs::prependSummaryEntry`)。
+
+---
+
+## 6. Raw 格式
+
+每个 Topic 的 `raw/daily/YYYY-MM-DD.md` 是当日所有 source 合并的事实原始库。
 
 - **一天一个文件**,**全局时间倒序**(最新在上,不变量)
-- **每次 collect 整体重排**,不是"新 block 前插"。一旦某个 source 这一轮才抓到一条旧 tweet(pinned 挤占 / list 成员刚顶上来 / source 晚一轮才出现),全局重排能把它放到时间上正确的位置,不破坏倒序不变量
-- **多 source 合并**:同 Topic 下配置的多个 source(多 list / 多 profile)写进同一天文件,block 内用 `via: slug1, slug2` 标注来源(多 source 看到同一推文时聚合成一行)
-- **去重粒度 = tweet ID**,只扫每个 block 标题行的 `/status/(\d+)`(避免把 quote/link 行里的 ID 误算为顶层已存在)
-- **长推完整性**:X redux store 里的 tweet 实体已经把 `note_tweet` 合并进 `full_text`,Fetch 层直接拿到全文;raw 的 `type:` 行带 `hydrated` 标志表示"正文完整,非截断版"
-- **转发信号聚合**:
-  - **纯 RT**(无评论)在 X 里 statusId 就是原推的 ID,多人 RT 同一条会被 dedup 合到一个 block,`🔁 reposted by: @A, @B` 列出所有转发者
-  - **Quote tweet**(带评论)是独立 statusId,保留多个 block,通过 `🔗 quote: ... [url]` 里指向同一原推 URL 的关联让消费侧(Claude)识别"多人引用同一原推"
-- **外链不抓**:卡片只存 `🔗 link: <url>`,不展开外站
-- **Twitter Article 不预抓**:只有 `🖼️ article: "title"` 预览。report 阶段按需走 `scripts/fetch-article.mjs`
+- **每次 ingest 整体重排**,不是"新 block 前插"
+- **多 source 合并**:同 Topic 下多个 source 写进同一天文件,block 内 `via: slug1, slug2` 标注
+- **去重粒度 = tweet ID**,只扫每个 block 标题行 `/status/(\d+)`
+- **长推完整性**:redux store 已合并 `note_tweet`,raw 的 `type:` 行带 `hydrated`
+- **转发信号聚合**:纯 RT 合一个 block + `🔁 reposted by: @A, @B`;quote 保留多 block,通过 quote URL 关联
+- **外链不抓**;**Twitter Article 不预抓**(只存 `🖼️ article: "title"` 预览,analyze 阶段按需 enrich)
 - **block 格式**:
   ```
   ## @handle (Name) · MM-DD HH:MM · [source](url)
-  type: tweet · hydrated             (hydrated 恒显示在有完整正文的条目上)
-  via: slug1, slug2                  (多 source 时出现,值来自 SCHEMA.sources[].slug)
-  🔁 reposted by: @A, @B              (仅当有人纯 RT 了这条时出现)
-
+  type: tweet · hydrated
+  via: slug1, slug2
+  🔁 reposted by: @A, @B
+  
   推文完整正文
-
+  
   📊 N RT · N 💬 · N ❤️ · Nx views
-  🖼️ images · video · article: "title"   (可选,有媒体才出现)
-  🔗 quote: @handle — 完整 quote 正文 [url]  (可选,有引用才出现;不再 140 字截断)
-  🔗 link: <external-url>            (可选,有外链卡片才出现)
-
+  🖼️ images · video · article: "title"
+  🔗 quote: @handle — 完整 quote 正文 [url]
+  🔗 link: <external-url>
+  
   ---
   ```
-  Name 可缺省;MM-DD 防跨日/跨时区边界歧义
-
-**为什么是"先日期后合并"而不是"每 source 一个目录"**:消费侧(Daily Wiki / summaries / 时段报告)天然是"今天这个 Topic 发生了什么"的跨 source 视角,文件布局与消费模式同构;若单 source 要独立产出(独立 wiki / 独立 prompt),正确的升级路径是**拆成新 Topic**(Topic 是一等公民),而不是在 raw 层预支独立目录
 
 ---
 
-## 6. 风险清单(已识别)
+## 7. Prompt 占位符
 
-### R1. X 内部状态结构随版本漂移
+Analyze prompt 模板可用占位符:
 
-Timeline(list / profile)现在读 X 的 redux store(`state.urt.<timelineKey>` + `state.entities.tweets.entities` + `state.entities.users.entities`)。X 若重构内部状态形状(改 timeline key 前缀、调 entity normalize schema、移字段位置),Fetch 层会看到空 timeline 或缺字段。status 单推详情页、Twitter Article 深抓仍走 DOM selector,DOM 改版会影响它们。
+| 占位符 | 含义 |
+|---|---|
+| `{TOPIC_SLUG}` | topic slug |
+| `{DATE}` | 归属日 YYYY-MM-DD |
+| `{SLOT}` | slot name |
+| `{RAW_PATH}` | 当日 raw 文件绝对路径 |
+| `{WIKI_PATH}` | 当日 wiki 文件绝对路径 |
+| `{WIKI_WRITE_CMD}` | 写当前 slot section 的命令前缀 |
+| `{SOURCES}` | 人读的 source 描述 |
+| `{WINDOW_TYPE}` | today / since_prev |
+| `{WINDOW_START_LABEL}` · `{WINDOW_END_LABEL}` | YYYY-MM-DD HH:MM |
+| `{ARTICLE_CACHE_DIR}` | 当月 article 缓存目录绝对路径 |
+| `{FETCH_ARTICLE_CMD}` | 按需深抓 article 的命令行前缀 |
 
-**缓解**:
-- store 字段用多路径 fallback(`full_text → text`、`rest_id → id_str`、`extended_entities.media → entities.media`),不硬依赖单路径
-- timeline key 用前缀匹配 + `includes(listId)` 兜底,不锁死完整 key 名
-- `scripts/spike-list.mjs` / `spike-profile.mjs` 作可重放 gate,改版后立刻暴露断裂
+Digest prompt 模板可用占位符:
+
+| 占位符 | 含义 |
+|---|---|
+| `{TOPIC_SLUG}` | topic slug |
+| `{DATE}` | 归属日 |
+| `{WIKI_PATH}` | 当日 wiki 文件绝对路径(digest 的输入) |
+| `{SUMMARIES_PATH}` | summaries.md 绝对路径(写入目标) |
+| `{SUMMARY_WRITE_CMD}` | prepend summary 条目的命令前缀 |
+
+---
+
+## 8. 风险
+
+### R1. X 内部状态结构漂移
+Timeline 走 redux store(`state.urt.*` + `state.entities.*`),改版会断。status 详情页 + Article 走 DOM,DOM 改版会断。
+**缓解**:多路径 fallback;timeline key 前缀匹配 + listId includes 兜底;`spike-list.mjs` / `spike-profile.mjs` 作为 review gate。
 
 ### R2. 零配置是幻觉
+新 topic 至少要配 4 样:数据源 / 清洗规则 / 报告模板 / 摘要 prompt。**接受 2-3 小时配置成本**,SCHEMA + 模板降低门槛。
 
-"给一个数据源就能分析"只是**采集入口**的简化。每个新 Topic 至少要配 **4 样**:
+### R3. Skill 模式的不健壮
+analyze / digest 依赖"当前 Claude 会话会读 stdout 的 prompt 并接棒"。脱离 Claude Code 会话静默失败(脚本 exit 0,无 LLM 工作发生)。
+**缓解**:v2.x 引入 `lib/llm.mjs::complete()`(direct API 模式),同一份 method、同一份 prompt,仅 LLM 调用一步换实现。
 
-- 数据源(list / 用户列表)
-- 清洗规则(什么算噪音)
-- 报告模板(要问哪些问题)
-- 摘要 prompt(AI 风格 vs Web3 风格完全不同)
-
-**缓解**:接受"新 topic 上线 = 2-3 小时配置"这个现实。SCHEMA.md 模板化降低配置成本。
-
-### R3. Web3 场景挑战远大于 AI
-
-- AI list:观点 + 链接 + 数据,清洗规则好写
-- Web3 list:meme 图 + $TICKER + 黑话 + pump 信号,清洗规则和价值判定都模糊
-
-**缓解**:先把 AI topic 打磨到自己每天真用,再挑 Web3。不并行起步。
-
-### R4. 月度 rotate 的数据完整性
-
-cron 失败、重入错乱、归档漏文件 = 丢数据。
-
-**缓解**:rotate 脚本必须**幂等 + `--dry-run`**。手动跑若干次验证后才上 cron。
+### R4. 月度归档的数据完整性
+cron 失败 / 重入错乱 / 漏文件 = 丢数据。
+**缓解**:`topic.archive()` 必须幂等 + 支持 `--dry-run`;手动跑若干次再考虑 cron。
 
 ---
 
-## 7. v1 实现状态
+## 9. v2 实现状态
 
 | 步 | 任务 | 状态 |
 |---|---|---|
-| 1 | CDP 瘦核 + X fetcher(list + profile) | ✅ 完成 |
-| 2 | Skill 骨架 + config + Topic SCHEMA + collect 端到端 | ✅ 完成 |
-| 3 | Daily Wiki 生成(多 slot 自定义,window today/since_prev) | ✅ 完成(Skill 模式,cron 化留 v2) |
-| 4 | 月度 rotate 脚本(`--dry-run` + 幂等,含 article cache) | ✅ 完成(真月末归档留 live gate) |
-| 5 | Fetch 层从 DOM 爬虫迁到 X redux store 读取(长推 / repost / metrics 自带) | ✅ 完成 |
-| 6 | 按需 Twitter Article 深抓 + 按月缓存 | ✅ 完成(`scripts/fetch-article.mjs`) |
-| 7 | 新 topic 脚手架(交互向导 + `--from-json`) | ✅ 完成(`scripts/new-topic.mjs`) |
-| 8 | `report now` wrap 时 date/raw/wiki/window 一致性 + 显式 slot canonical end | ✅ 完成(消除反向时间窗 / 错位 raw) |
-| 9 | collect 全局时间重排(非前插) | ✅ 完成(`splitRawBlocks` + `mergeBlocksByTimeDesc`) |
-| 10 | 加第二个 topic 验证配置化 | ✅ 完成(本地双 topic 跑通,仓库只保留 `ai-radar` 示例) |
-| 11 | Wiki 当日合文件 + slot section 级幂等 upsert | ✅ 完成(`scripts/wiki-write.mjs` + `lib/wiki.mjs::upsertWikiSlotSection`;Claude 生成 slot markdown → heredoc pipe,职责分离) |
+| 1 | Topic class 一等公民 | ✅ |
+| 2 | Ingest method(等价 v1 collect) | ✅ |
+| 3 | Analyze method(等价 v1 report,prompt 不再附带 digest) | ✅ |
+| 4 | Digest method(独立 method + 通用 prompt + summary-write agent tool) | ✅ |
+| 5 | Enrich method(等价 v1 fetch-article 的 method 形态) | ✅ |
+| 6 | Archive method(等价 v1 rotate) | ✅ |
+| 7 | Admin static methods(等价 v1 new-topic) | ✅ |
+| 8 | 统一 CLI scripts/perch.mjs | ✅ |
+| 9 | LLM Direct 模式(`lib/llm.mjs::complete()`) | ⏸ 留 v2.x |
+| 10 | Schedule 字段 + 通用 runner(读 schedule 自动 chain analyze→digest) | ⏸ 留 v2.x |
+| 11 | Topic Wiki rebuild / stale | ⏸ 不实现 |
+| 12 | 跨 topic 查询 | ⏸ 不实现 |
 
-### v1 明确不做
+### v2 明确不做
 
+- LLM Direct 模式(留接口,不实现)
+- Schedule 自动驱动(留 SCHEMA 字段,不实现 runner)
 - Topic Wiki 的 rebuild / stale 机制
 - 跨 topic 查询
-- Processor 插件化(第一版 report 一种)
-- SQLite 索引层(v2 视查询需求再加)
-- `/perch report` 的 cron 化 / 直连 API(当前走 Claude Code Skill 模式)
-- `summaries.md` 的月度切分归档(rotate 只动 raw/daily + wiki/daily + cache/articles,v2 再补 summaries 切分)
-- 外链(非 twitter article)深抓
-- per-topic timezone(当前全局时区)
-- **跨昨日 raw 的 since_prev 首 slot 支持**:当前首 slot 配 since_prev 会 fallback 到 today;想让 morning 真正覆盖昨晚 overnight 得在凌晨 first_slot.start_hour 之前跑 `report now`(会 wrap 到昨日末 slot,归属日完整 24h)。v2 再考虑跨日语义
+- summaries 月度切分归档
+- per-topic timezone
 
 ---
 
-## 8. 开放问题(TBD)
+## 10. 术语表
 
-- **Topic 间共享 KOL 观测**:同一账号出现在多 list 时,是否 cross-reference?
-- **历史 wiki 在 prompt 迭代后是否自动 rebuild**:v1 手动触发,待场景明朗再考虑自动化
-- **SQLite 索引层什么时候加**:触发条件 = 跨月查询 / 按关键词查 / 按 metrics 排序 真的成为日常需求时
-- **report 何时上 cron / 直连 API**:v1 Skill 模式依赖当前 Claude 会话,自动化是 v2 的事
-
----
-
-## 9. 附录:术语表
-
-| 术语             | 含义                                                               |
-| -------------- | ---------------------------------------------------------------- |
-| **Topic**      | 一个配置包(source + 清洗 + 模板 + 摘要 prompt),对应一个独立数据目录                   |
-| **Source**     | Topic 的数据输入端,插件化。当前支持 `x-list` / `x-user`                        |
-| **Processor**  | Topic 的数据产出端,插件化。当前支持 `report`(后续扩展 `distill` / `visual-card` 等) |
-| **Daily Wiki** | 归属日 1 份文件(`YYYY-MM-DD.md`),所有 slot 以 `## slot: <name>` 分段,按 start_hour 升序;slot 粒度幂等 upsert |
-| **Topic Wiki** | 按需生成的跨日期主题报告,带 frontmatter 可 rebuild                             |
-| **Raw**        | 归一化后的原始推文 markdown 文件,一天一个                                       |
-| **Summaries**  | 当月推文的日概览索引,LLM 一次读完用于定位相关推文                                      |
-| **Rotate**     | 月度归档操作,把非当月 raw/wiki 移到 `archive/YYYY-MM/`                       |
-| **Skill 模式**   | `/perch report` 的工作方式:脚本准备好 prompt,当前 Claude 会话接棒生成              |
+| 术语 | 含义 |
+|---|---|
+| **Topic** | 一等对象,封装一个信息漏斗的全部配置 + 行为(method) |
+| **Source** | Topic 的数据输入端,目前支持 `x-list` / `x-user` |
+| **Daily Wiki** | 归属日 1 份文件,按 `## slot: <name>` 分段;analyze 维护 |
+| **Topic Wiki** | 跨日累积,带 frontmatter;v2 不实现 |
+| **Raw** | 归一化后的原始推文 markdown,一天一个文件 |
+| **Summaries** | 当月日概览,digest 维护(`## YYYY-MM-DD` 条目时间倒序) |
+| **Slot** | Topic 级时段配置(`SCHEMA.slots`),每条对应一个 analyze prompt 模板 |
+| **Window** | slot 的报告覆盖窗口(`today` / `since_prev`) |
+| **Skill 模式** | LLM 介入步由当前 Claude 会话接棒;脚本只渲染 prompt |
+| **Direct 模式** | LLM 介入步由脚本直接调 Anthropic API;v2.x 实现 |
+| **Agent tool** | prompt 内被 Claude Bash 调用的辅助脚本(wiki-write / summary-write / fetch-article) |

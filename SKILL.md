@@ -1,73 +1,80 @@
 ---
 name: perch
 description:
-  多 Topic 个人信息漏斗。从 X(List 或用户时间线)采集数据,按 Topic 生成 Daily/Topic Wiki 和各类衍生产出。
-  触发场景:X 数据采集、每日/时段报告生成、管理多主题信息漏斗(AI / Web3 / ...)。
-  v1 主链路已实现。完整设计见 docs/DESIGN.md,快速入门见 README.md。
+  多 Topic 个人信息漏斗(v2 · Topic 一等公民)。从 X(List 或用户时间线)采集数据,
+  按 Topic method(ingest / analyze / digest / archive / enrich / admin)产出
+  Daily Wiki + 日概览 + 月度归档。触发场景:X 数据采集、时段报告生成、管理多主题信息漏斗。
+  完整设计见 docs/DESIGN.md,快速入门见 README.md。
 ---
 
 # Perch
 
-> 互联网数据处理框架。每个 Topic = 一组数据源 + 一套 LLM 工作流。
+> 互联网数据处理框架。每个 Topic 是一等对象,封装一组数据源 + 一套信息加工流水线。
 
-## ⚠️ 必读:设计规范
+## ⚠️ 必读
 
-**完整架构、风险、v1 状态、术语全部在 `docs/DESIGN.md`。任何实现前请先读。**
+**完整架构、风险、术语全部在 `docs/DESIGN.md`。任何实现前请先读。**
 
-## 当前状态
+## 当前状态(v2)
 
-v1 主链路已实现:collect / report / rotate / fetch-article / new-topic / wiki-write。命令见下。
+按"信息生命周期"切角色,Topic 升为一等公民。所有领域操作都是 `topic.<method>()`,CLI 是薄 dispatcher。
 
-## 核心概念(3 个)
+## 核心概念
 
 | 概念 | 含义 |
 |---|---|
-| **Topic** | 配置包 = source + 清洗规则 + 报告模板 + 摘要 prompt。每个 Topic 一个独立数据目录 |
-| **Daily Wiki** | 归属日 1 份文件(`YYYY-MM-DD.md`),按 topic 配置的 slot(morning/noon/evening/...)分段为 `## slot: <name>`,每个 slot 重跑幂等替换自己那段;月末归档 |
-| **Topic Wiki** | 跨日期累积,按需产出,带 frontmatter 可 stale → rebuild |
+| **Topic** | 一等对象,封装数据源 + 时段配置 + 模板。所有操作都是它的 method |
+| **角色** | Ingest / Analyze / Digest / Enrich / Archive / Admin —— 信息生命周期的六个阶段 |
+| **Daily Wiki** | 归属日 1 份文件,按 `## slot: <name>` 分段;analyze 维护 |
+| **Summaries** | 当月日概览索引,`## YYYY-MM-DD` 时间倒序;digest 维护(v2 新独立 method) |
 
-## 架构一图流
+## 角色与命令
 
-```
-[Source 插件]  →  [中间层固定]  →  [Processor 插件]
-     ↓                ↓                     ↓
-  X List         Raw 格式              Daily Wiki
-  X 用户时间线    summaries.md          Topic Wiki
-                 月度 rotate            ...(可扩展)
-                 Frontmatter 规范
-```
+所有命令统一入口 `scripts/perch.mjs`:
 
-中间固定(raw 格式、summaries、frontmatter、rotate),两头可扩展(新 source / 新 processor 平行加)。
-
-代码内部按 **Fetch / Business / Tool** 三层分工,业务语义只落在 Business 层。详见 DESIGN §2.1。
-
-## 命令
-
-### v1 已实现
-
-| 命令 | 底层脚本 | 工作模式 |
+| 命令 | 角色 | 工作模式 |
 |---|---|---|
-| `/perch collect [--topic <slug>] [--dry]` | `scripts/collect.mjs` | 纯自动化:抓 X → dedup + readExistingIds → sort → 写 raw |
-| `/perch report [<slot>\|now] [--topic <slug>]` | `scripts/report.mjs` | **Skill 模式**(见下) |
-| `/perch rotate [--dry-run] [--topic <slug>]` | `scripts/rotate.mjs` | 纯自动化:搬非当月 `raw/daily/*` 和 `wiki/daily/*` 到 `archive/YYYY-MM/` |
-| `node scripts/fetch-article.mjs <status_url> [--topic <slug>]` | `scripts/fetch-article.mjs` | report 阶段 Claude 按需 Bash 调用:CDP 抓 Twitter Article → 缓存 `cache/articles/YYYY-MM/` |
-| `node scripts/new-topic.mjs [--from-json <spec>]` | `scripts/new-topic.mjs` | 纯自动化:交互 / 非交互创建 topic(SCHEMA + prompt + config 注册) |
-| `{WIKI_WRITE_CMD} << 'PERCH_EOF' ... PERCH_EOF` | `scripts/wiki-write.mjs` | report 阶段 Claude 管道调用:按 slot 对当日 wiki 做 section 级幂等 upsert |
+| `/perch ingest [--topic <slug>] [--dry] [--limit N]` | Ingest | 纯自动化:抓 X → 跨源去重 → 全局时间重排 → 写 raw |
+| `/perch analyze [--topic <slug>] [--slot <name>\|now] [--date YYYY-MM-DD]` | Analyze | **Skill 模式**(渲染 prompt → Claude 接棒) |
+| `/perch digest [--topic <slug>] [--date YYYY-MM-DD]` | Digest | **Skill 模式**(独立 method,v2 新增) |
+| `/perch enrich [--topic <slug>] --url <status_url>` | Enrich | 纯自动化:CDP 抓 Twitter Article → 月度缓存 |
+| `/perch archive [--topic <slug>] [--dry-run]` | Archive | 纯自动化:非当月 raw / wiki / cache → archive/YYYY-MM/ |
+| `/perch admin list` / `/perch admin create [--from-json spec.json]` | Admin | 纯自动化:Topic 配置 CRUD |
 
-### v1 明确不实现(DESIGN §7)
+Agent tools(prompt 内 Claude Bash 调用,不是用户主入口):
 
-- `/perch wiki "主题"` — Topic Wiki stale / rebuild 机制
-- `/perch query "..."` — 跨 topic 查询
+| 工具 | 调用时机 |
+|---|---|
+| `scripts/wiki-write.mjs` | analyze 阶段 Claude 生成完 slot markdown 后 pipe 调用 |
+| `scripts/summary-write.mjs` | digest 阶段 Claude 生成完日概览后 pipe 调用 |
+| `scripts/fetch-article.mjs` | analyze 阶段 Claude 按需深抓 article(Topic.enrich 的 thin wrapper) |
 
-### 为什么 report 走 Skill 模式(和 collect / rotate 不同)
+## v1 → v2 命令对照
 
-`collect` 和 `rotate` 是**确定性任务**(纯 IO,不需要智能):脚本自己跑完即可,将来 cron 化无障碍。
+| v1 | v2 | 备注 |
+|---|---|---|
+| `node scripts/collect.mjs` | `node scripts/perch.mjs ingest` | 行为等价 |
+| `node scripts/report.mjs <slot>` | `node scripts/perch.mjs analyze --slot <slot>` | prompt 不再附带 digest 任务 |
+| `node scripts/rotate.mjs` | `node scripts/perch.mjs archive` | 行为等价 |
+| `node scripts/fetch-article.mjs <url>` | `node scripts/perch.mjs enrich --url <url>` | 同时保留 fetch-article.mjs 作为 prompt 内 agent tool |
+| `node scripts/new-topic.mjs --from-json` | `node scripts/perch.mjs admin create --from-json` | 行为等价 |
+| (无,evening prompt 附带产出) | `node scripts/perch.mjs digest` | **独立 method**,需显式调用 |
 
-`report` 需要 LLM 智能(slot 内的 Q1–Qn 判断都是内容分析),v1 走 **Skill 模式**:
+## v2 不实现(留 v2.x / 不做)
 
-1. `scripts/report.mjs` 读 topic 配置 + 对应时段的 prompt 模板
-2. 把模板里的 `{RAW_PATH}` / `{WIKI_PATH}` / `{WIKI_WRITE_CMD}` / `{SUMMARIES_PATH}` / `{SOURCES}` / `{DATE}` / `{WINDOW_*}` 等占位符填实
-3. 完整 prompt 打到 stdout
-4. **当前 Claude 会话读到 stdout 后接棒**:读 raw → 按 prompt 生成 slot markdown → **用 `{WIKI_WRITE_CMD}` heredoc pipe 给 `wiki-write.mjs` 做 section 级 upsert**(evening 时额外把一条概览 append 到 `{SUMMARIES_PATH}`)
+- LLM Direct 模式(脚本直连 Anthropic API,留 `lib/llm.mjs::complete()` 接口)
+- Schedule 自动驱动(SCHEMA `schedule` 字段位置已留)
+- Topic Wiki stale / rebuild
+- 跨 topic 查询
+- summaries 月度切分归档
 
-所以 `/perch report` 不直接产出 wiki,是"让 Claude 产出 wiki"。wiki-write.mjs 负责持久化(按 slot 幂等替换 + 其他 slot section 原样保留),Claude 只管生成内容。cron 自动化(无会话依赖、直接调 Anthropic API)留 v2。
+## 为什么 analyze / digest 走 Skill 模式
+
+`ingest` / `archive` / `enrich` / `admin` 是确定性任务,脚本自己跑完即可。
+
+`analyze` / `digest` 需要 LLM 智能,v2 第一版走 **Skill 模式**:
+1. perch.mjs → topic.analyze(slot) → 渲染 prompt → 打 stdout
+2. **当前 Claude 会话读到 stdout 后接棒**:读 raw → 生成 markdown → 用 `wiki-write.mjs` heredoc pipe upsert
+3. digest 同构,只是 pipe 给 `summary-write.mjs`
+
+cron / openclaw / 任何无会话 runner 要驱动这一步,要等 v2.x 的 LLM Direct 模式落地。

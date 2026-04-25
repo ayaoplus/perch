@@ -201,20 +201,9 @@ Signal: 🟢🟢🟢
 4. **不够就不凑**:某题没信号就标 ⚪,不要编造
 5. **严格窗口**:早于 `{WINDOW_START_LABEL}` 或晚于 `{WINDOW_END_LABEL}` 的推文一律不分析
 
-## 附加任务:更新 summaries.md
-
-生成完报告后,**追加一条概览到 `{SUMMARIES_PATH}`**:
-
-```markdown
-## {DATE}
-{5-7 句话:窗口内最主要的 2-3 个事件 / KOL 态度分布 / 关键数据 / 中英温差 / 异常信号}
-```
-
-插入到 `<!-- -->` 注释之后的第一个 `##` 之前(即置顶,时间倒序)。`##` 后的日期用 `{DATE}`(归属日),不要误用"今天"。
-
 ## 写入方式
 
-生成完整 markdown 后(不含 summaries.md 那条,那个走 Write 或 Edit 直接维护),**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
+生成完整 markdown 后,**用 Bash heredoc 管道给 wiki-write 脚本**,它会对当日 wiki 的 `## slot: {SLOT}` 段做幂等 upsert(其他 slot 的 section 原样保留,同 slot 重跑替换自己那段):
 
 ```bash
 {WIKI_WRITE_CMD} <<'PERCH_EOF'
@@ -224,4 +213,4 @@ PERCH_EOF
 
 最终文件落在 `{WIKI_PATH}`(当日所有 slot 共用一份)。不要自己用 Write 工具直接覆盖,会破坏其他 slot 的 section。
 
-summaries.md 仍由本 prompt 的"附加任务"段独立维护,不归 wiki-write 脚本管。
+> v2 备注:summaries.md 的日概览已独立成 `perch digest` 命令,不在本 analyze prompt 内附带产出。完成本报告后请另行运行 `perch digest --topic {TOPIC_SLUG}`(或等 schedule 自动触发)。
